@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{{ subject }}</title>
+</head>
+<body>
+    <div style="text-align: right;">
+        <p>Дата: {{ date }}</p>
+    </div>
+    
+    <p>Кому: {{ recipient }}</p>
+    <p>От: {{ sender }}</p>
+    <p>Тема: {{ subject }}</p>
+    
+    {% block content %}{% endblock %}
+    
+    <p>Ответственное лицо: {{ signer }}</p>
+    <p>Подпись: ________________</p>
+</body>
+</html>

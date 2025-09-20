@@ -1,0 +1,65 @@
+{
+  "embedding": {
+    "model": "paraphrase-multilingual-MiniLM-L12-v2",
+    "dimension": 384,
+    "max_sequence_length": 512,
+    "batch_size": 32
+  },
+  "qdrant": {
+    "collection_name": "universal_docs",
+    "vector_params": {
+      "distance": "Cosine"
+    },
+    "search_params": {
+      "limit": 10,
+      "with_payload": true,
+      "with_vectors": false
+    }
+  },
+  "faiss": {
+    "index_type": "IndexFlatIP",
+    "normalize_vectors": true
+  },
+  "chunking": {
+    "strategy": "hybrid",
+    "max_chunk_size": 2000,
+    "overlap": 200,
+    "min_chunk_size": 50
+  },
+  "document_processing": {
+    "pdf": {
+      "extract_images": true,
+      "extract_tables": true
+    },
+    "docx": {
+      "extract_headers": true,
+      "extract_tables": true
+    },
+    "excel": {
+      "extract_formulas": true,
+      "extract_charts": true
+    },
+    "image": {
+      "ocr_languages": ["rus", "eng"],
+      "extract_objects": true,
+      "extract_text": true
+    }
+  },
+  "hybrid_search": {
+    "weights": {
+      "qdrant": 0.7,
+      "faiss": 0.3
+    },
+    "reranking": {
+      "enabled": true,
+      "top_k": 5
+    }
+  },
+  "performance": {
+    "parallel_processing": true,
+    "max_workers": 4,
+    "batch_processing": true,
+    "cache_enabled": true,
+    "cache_ttl": 1800
+  }
+}

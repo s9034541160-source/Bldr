@@ -1,0 +1,49 @@
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | venv
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["core", "scripts", "tests", "web"]
+known_third_party = ["PIL", "PyPDF2", "concurrent", "docx", "dotenv", "ezdxf", "faiss", "fastapi", "glob", "hashlib", "httpx", "ifcopenshell", "json", "langchain_community", "logging", "neo4j", "networkx", "numpy", "pandas", "pathlib", "pillow", "pydantic", "pytesseract", "pytest", "qdrant_client", "re", "requests", "sentence_transformers", "shutil", "spacy", "time", "torch", "tqdm", "typing", "uvicorn", "websockets"]
+
+[tool.pylint.messages_control]
+disable = [
+    "C0114", # missing-module-docstring
+    "C0115", # missing-class-docstring
+    "C0116", # missing-function-docstring
+    "R0903", # too-few-public-methods
+    "R0913", # too-many-arguments
+    "W0613", # unused-argument
+    "W0622", # redefined-builtin
+]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "-x",
+    "--tb=short",
+]

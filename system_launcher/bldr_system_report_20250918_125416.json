@@ -1,0 +1,212 @@
+{
+  "timestamp": "2025-09-18T12:54:16.460961",
+  "system_status": {
+    "overall_status": "critical",
+    "total_components": 7,
+    "running_components": 1,
+    "error_components": 2,
+    "components": {
+      "neo4j": {
+        "status": "stopped",
+        "health": "unknown",
+        "last_error": null,
+        "uptime": null,
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null
+      },
+      "redis": {
+        "status": "running",
+        "health": "healthy",
+        "last_error": null,
+        "uptime": 96,
+        "cpu_usage": 0.0,
+        "memory_usage": 0.1717706030373816,
+        "response_time": null
+      },
+      "qdrant": {
+        "status": "stopped",
+        "health": "unknown",
+        "last_error": null,
+        "uptime": null,
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null
+      },
+      "celery_worker": {
+        "status": "error",
+        "health": "critical",
+        "last_error": "Process terminated unexpectedly",
+        "uptime": 3,
+        "cpu_usage": 0.0,
+        "memory_usage": 0.05495652899019804,
+        "response_time": null
+      },
+      "celery_beat": {
+        "status": "error",
+        "health": "critical",
+        "last_error": "Process terminated unexpectedly",
+        "uptime": null,
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null
+      },
+      "backend": {
+        "status": "starting",
+        "health": "unknown",
+        "last_error": null,
+        "uptime": 1,
+        "cpu_usage": 0.0,
+        "memory_usage": 0.05499247178221255,
+        "response_time": null
+      },
+      "frontend": {
+        "status": "stopped",
+        "health": "unknown",
+        "last_error": null,
+        "uptime": null,
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null
+      }
+    }
+  },
+  "detailed_components": {
+    "neo4j": {
+      "id": "neo4j",
+      "name": "Neo4j Database",
+      "type": "database",
+      "status": "stopped",
+      "health": "unknown",
+      "port": 7474,
+      "dependencies": [],
+      "pid": null,
+      "start_time": null,
+      "last_error": null,
+      "metrics": {
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null,
+        "uptime": null
+      }
+    },
+    "redis": {
+      "id": "redis",
+      "name": "Redis Server",
+      "type": "database",
+      "status": "running",
+      "health": "healthy",
+      "port": 6379,
+      "dependencies": [],
+      "pid": 1684,
+      "start_time": "2025-09-18T12:52:40.294166",
+      "last_error": null,
+      "metrics": {
+        "cpu_usage": 0.0,
+        "memory_usage": 0.1717706030373816,
+        "response_time": null,
+        "uptime": 96
+      }
+    },
+    "qdrant": {
+      "id": "qdrant",
+      "name": "Qdrant Vector Database",
+      "type": "database",
+      "status": "stopped",
+      "health": "unknown",
+      "port": 6333,
+      "dependencies": [],
+      "pid": null,
+      "start_time": null,
+      "last_error": null,
+      "metrics": {
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null,
+        "uptime": null
+      }
+    },
+    "celery_worker": {
+      "id": "celery_worker",
+      "name": "Celery Worker",
+      "type": "service",
+      "status": "error",
+      "health": "critical",
+      "port": null,
+      "dependencies": [
+        "redis"
+      ],
+      "pid": 5832,
+      "start_time": "2025-09-18T12:53:22.526484",
+      "last_error": "Process terminated unexpectedly",
+      "metrics": {
+        "cpu_usage": 0.0,
+        "memory_usage": 0.05495652899019804,
+        "response_time": null,
+        "uptime": 3
+      }
+    },
+    "celery_beat": {
+      "id": "celery_beat",
+      "name": "Celery Beat Scheduler",
+      "type": "service",
+      "status": "error",
+      "health": "critical",
+      "port": null,
+      "dependencies": [
+        "redis"
+      ],
+      "pid": 22324,
+      "start_time": "2025-09-18T12:52:48.829176",
+      "last_error": "Process terminated unexpectedly",
+      "metrics": {
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null,
+        "uptime": null
+      }
+    },
+    "backend": {
+      "id": "backend",
+      "name": "FastAPI Backend",
+      "type": "service",
+      "status": "starting",
+      "health": "unknown",
+      "port": 8000,
+      "dependencies": [
+        "neo4j",
+        "redis",
+        "celery_worker"
+      ],
+      "pid": 3480,
+      "start_time": "2025-09-18T12:53:44.979730",
+      "last_error": null,
+      "metrics": {
+        "cpu_usage": 0.0,
+        "memory_usage": 0.05499247178221255,
+        "response_time": null,
+        "uptime": 1
+      }
+    },
+    "frontend": {
+      "id": "frontend",
+      "name": "Frontend Dashboard",
+      "type": "application",
+      "status": "stopped",
+      "health": "unknown",
+      "port": 3005,
+      "dependencies": [
+        "backend"
+      ],
+      "pid": null,
+      "start_time": null,
+      "last_error": null,
+      "metrics": {
+        "cpu_usage": null,
+        "memory_usage": null,
+        "response_time": null,
+        "uptime": null
+      }
+    }
+  }
+}

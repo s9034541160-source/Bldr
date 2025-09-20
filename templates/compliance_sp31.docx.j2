@@ -1,0 +1,31 @@
+{% extends "base_letter.docx" %}
+
+{% block content %}
+<h1>Письмо о соответствии СП31</h1>
+
+<p>Настоящим письмом подтверждаем соответствие проектной документации 
+требованиям СП 45.13330.2017 (актуализированная редакция СНиП 3.02.01-87*) 
+в части организации строительного контроля.</p>
+
+{% if compliance_details %}
+<h2>Подробности соответствия:</h2>
+<ul>
+{% for detail in compliance_details %}
+    <li>{{ detail }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+
+{% if violations %}
+<h2>Выявленные нарушения:</h2>
+<ul>
+{% for violation in violations %}
+    <li>{{ violation }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>Нарушений не выявлено.</p>
+{% endif %}
+
+<p>Общая стоимость проекта: {{ total_cost }}</p>
+{% endblock %}
