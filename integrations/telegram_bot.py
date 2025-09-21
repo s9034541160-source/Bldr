@@ -644,7 +644,7 @@ async def handle_voice(update, context):
         chat_payload = {
             'message': 'Voice message',
             'context_search': False,
-            'max_context': 0,
+            'max_context': 1,  # min 1 to satisfy API schema
             'agent_role': 'coordinator',
             'voice_data': voice_base64,
             'request_context': {
@@ -706,9 +706,9 @@ async def handle_photo(update, context):
         # Send to AI chat endpoint with embedded image data
         headers = get_auth_headers()
         chat_payload = {
-            'message': 'Image message',
+            'message': prompt,  # use default/derived prompt when no caption
             'context_search': False,
-            'max_context': 0,
+            'max_context': 1,  # min 1 to satisfy API schema
             'agent_role': 'coordinator',
             'image_data': photo_base64,
             'request_context': {
@@ -791,11 +791,16 @@ async def handle_document(update, context):
             'message': prompt,
             'context_search': True,
             'max_context': 3,
-            'agent_role': 'coordinator'
+            'agent_role': 'coordinator',
+            'document_data': doc_base64,
+            'document_name': file_name,
+            'request_context': {
+                'channel': 'telegram',
+                'chat_id': update.message.chat_id,
+                'user_id': update.message.from_user.id if update.message.from_user else None
+            }
         }
         
-        # Note: document_data would need to be handled differently in the new endpoint
-        # For now, we'll process the prompt and add document handling later
         resp = requests.post(f'{API_BASE}/api/ai/chat', json=chat_payload, headers=headers, timeout=1800)
         
         if resp.status_code == 200:

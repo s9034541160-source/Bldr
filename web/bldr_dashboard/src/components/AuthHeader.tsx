@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Button, Modal, Form, Input, message, Switch, Avatar, Dropdown, Menu } from 'antd';
+import { Layout, Button, Modal, Form, Input, message, Switch, Avatar, Dropdown } from 'antd';
 import { UserOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { apiService } from '../services/api';
@@ -24,7 +24,7 @@ const AuthHeader: React.FC = () => {
           if (!currentUser) {
             setUser({
               token: "disabled_auth_token",
-              role: "user",
+              role: "admin",  // Changed from "user" to "admin" when auth is disabled
               username: "anonymous"
             });
           }
@@ -88,7 +88,7 @@ const AuthHeader: React.FC = () => {
             // Restore mock user
             setUser({
               token,
-              role: "user",
+              role: "admin",  // Changed from "user" to "admin" when auth is disabled
               username: "anonymous"
             });
             console.log('Restored anonymous user (auth disabled)');
@@ -234,16 +234,10 @@ const AuthHeader: React.FC = () => {
     console.log('User logged out and localStorage cleared');
   };
   
-  const menu = (
-    <Menu>
-      <Menu.Item key="profile">
-        Роль: {user?.role}
-      </Menu.Item>
-      <Menu.Item key="logout" onClick={handleLogout}>
-        Выход
-      </Menu.Item>
-    </Menu>
-  );
+  const menuItems = [
+    { key: 'profile', label: <>Роль: {user?.role}</> },
+    { key: 'logout', label: 'Выход' },
+  ];
   
   return (
     <Header style={{ 
@@ -258,7 +252,13 @@ const AuthHeader: React.FC = () => {
       />
       
       {user ? (
-        <Dropdown overlay={menu} trigger={['click']}>
+        <Dropdown 
+          trigger={['click']}
+          menu={{ 
+            items: menuItems,
+            onClick: ({ key }) => { if (key === 'logout') handleLogout(); }
+          }}
+        >
           <Avatar icon={<UserOutlined />} style={{ cursor: 'pointer' }} />
         </Dropdown>
       ) : (
@@ -281,7 +281,7 @@ const AuthHeader: React.FC = () => {
       />
       
       <Modal
-        visible={showLogin}
+        open={showLogin}
         onCancel={() => setShowLogin(false)}
         footer={null}
         title="Вход в систему"

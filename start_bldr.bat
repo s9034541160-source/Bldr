@@ -1,6 +1,7 @@
 @echo off
 title Bldr Empire v2 - Unified Startup
 color 0A
+setlocal enabledelayedexpansion
 
 echo ==================================================
 echo    Bldr Empire v2 - Unified Startup
@@ -24,7 +25,10 @@ timeout /t 3 /nobreak >nul
 
 REM Load environment variables
 if exist ".env" (
-    for /f "tokens=*" %%i in (.env) do set %%i
+    REM Load .env ignoring comment lines starting with # and preserving full lines
+    for /f "usebackq eol=# delims= tokens=*" %%i in (".env") do (
+        set "%%i"
+    )
     echo [INFO] Environment variables loaded from .env
 ) else (
     echo [WARN] .env file not found, using default values
@@ -63,22 +67,39 @@ timeout /t 5 /nobreak >nul
 
 REM 2. Start Qdrant (if Docker is available)
 echo [INFO] Starting Qdrant vector database...
-docker version >nul 2>&1
+REM If Qdrant already listening on 6333, skip Docker start and just report OK
+netstat -ano | findstr ":6333" >nul
 if %errorlevel% equ 0 (
-    docker start qdrant-bldr >nul 2>&1
-    if %errorlevel% neq 0 (
-        docker run -d -p 6333:6333 -p 6334:6334 --name qdrant-bldr qdrant/qdrant:v1.7.0 >nul 2>&1
+    echo [INFO] Qdrant is already running on port 6333.
+) else (
+    set "DOCKER_BIN=docker"
+    where docker >nul 2>&1
+    if not %errorlevel%==0 (
+        if exist "%ProgramFiles%\Docker\Docker\resources\bin\docker.exe" set "DOCKER_BIN=%ProgramFiles%\Docker\Docker\resources\bin\docker.exe"
+        if exist "%ProgramFiles%\Docker\Docker\resources\bin\com.docker.cli.exe" set "DOCKER_BIN=%ProgramFiles%\Docker\Docker\resources\bin\com.docker.cli.exe"
+    )
+    "%DOCKER_BIN%" version >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo [INFO] Docker detected: %DOCKER_BIN%
+        "%DOCKER_BIN%" ps >nul 2>&1
         if %errorlevel% neq 0 (
-            echo [WARN] Failed to start Qdrant container. System will use in-memory storage as fallback.
+            echo [WARN] Docker CLI available but daemon not reachable. Will try to start container anyway.
+        )
+        "%DOCKER_BIN%" start qdrant-bldr >nul 2>&1
+        if %errorlevel% neq 0 (
+            "%DOCKER_BIN%" run -d -p 6333:6333 -p 6334:6334 --name qdrant-bldr qdrant/qdrant:v1.7.0 >nul 2>&1
+            if %errorlevel% neq 0 (
+                echo [WARN] Failed to start Qdrant container. System will use in-memory storage as fallback.
+            ) else (
+                echo [INFO] Qdrant container created and started
+            )
         ) else (
-            echo [INFO] Qdrant container created and started
+            echo [INFO] Qdrant container already running
         )
     ) else (
-        echo [INFO] Qdrant container already running
+        echo [WARN] Docker not available. Qdrant will not be started.
+        echo [INFO] System will use in-memory storage as fallback.
     )
-) else (
-    echo [WARN] Docker not available. Qdrant will not be started.
-    echo [INFO] System will use in-memory storage as fallback.
 )
 timeout /t 5 /nobreak >nul
 
@@ -98,32 +119,60 @@ timeout /t 3 /nobreak >nul
 REM 4. Start FastAPI backend
 echo [INFO] Starting FastAPI backend...
 cd /d "%~dp0"
-if exist "core\bldr_api.py" (
-    start "FastAPI Backend" cmd /k "python -m uvicorn core.bldr_api:app --host 127.0.0.1 --port 8000 --reload"
+if exist "backend\main.py" (
+    start "FastAPI Backend" cmd /k "python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload"
     echo [INFO] FastAPI backend started in visible window
 ) else (
-    echo [ERROR] bldr_api.py not found
+    echo [ERROR] main.py not found
 )
 echo [INFO] Waiting for backend to initialize...
-timeout /t 15 /nobreak >nul
-
-REM 5. Start Telegram Bot
-echo [INFO] Starting Telegram Bot...
-cd /d "%~dp0"
-if exist "integrations\telegram_bot.py" (
-    start /MIN "Telegram Bot" cmd /c "python integrations/telegram_bot.py"
-    echo [INFO] Telegram Bot started
-) else (
-    echo [ERROR] Telegram bot script not found
+set backend_ready=false
+for /l %%i in (1, 1, 60) do (
+    curl -s http://localhost:8000/health >nul 2>&1
+    if !errorlevel! equ 0 (
+        set backend_ready=true
+        goto backend_ready
+    )
+    timeout /t 1 /nobreak >nul
 )
-timeout /t 2 /nobreak >nul
+:backend_ready
+if "%backend_ready%"=="false" (
+    echo [ERROR] Backend failed to start in time
+) else (
+    echo [INFO] Backend is ready
+)
 
-cd /d "%~dp0"
-
-REM 6. Start Frontend
+REM 5. Start Frontend
 echo [INFO] Starting Frontend Dashboard...
-cd /d "%~dp0web\bldr_dashboard"
-if exist "package.json" (
+set "FRONTEND_DIR=%~dp0web\bldr_dashboard"
+if exist "%FRONTEND_DIR%\package.json" (
+    echo [INFO] Preparing Frontend dependencies...
+    pushd "%FRONTEND_DIR%"
+    if not exist "node_modules" (
+        echo [INFO] node_modules not found -> npm ci
+        call npm ci
+        if %errorlevel% neq 0 (
+            echo [WARN] npm ci failed. If you see EPERM unlink for esbuild.exe:
+            echo        1) Close all Node processes and antivirus real-time scan for this folder
+            echo        2) Manually delete node_modules\@esbuild
+            echo        3) Re-run this script
+        ) else (
+            echo [INFO] Dependencies installed
+        )
+    ) else (
+        if not exist "node_modules\.bin\vite.cmd" (
+            echo [WARN] vite not found -> npm ci
+            call npm ci
+            if %errorlevel% neq 0 (
+                echo [WARN] npm ci failed. See hints above (EPERM / antivirus / close node)
+            ) else (
+                echo [INFO] Dependencies repaired
+            )
+        ) else (
+            echo [INFO] node_modules OK (vite present)
+        )
+    )
+
     REM Check if port 3001 is already in use
     netstat -ano | findstr :3001 >nul
     if %errorlevel% equ 0 (
@@ -131,18 +180,35 @@ if exist "package.json" (
         for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3001') do (
             taskkill /F /PID %%a >nul 2>&1
         )
-        timeout /t 5 /nobreak >nul
     )
-    start "Frontend Dashboard" cmd /k "npm run dev"
-    echo [INFO] Frontend Dashboard started in visible window
+    echo [INFO] Launching Frontend Dashboard...
+    start "Frontend Dashboard" cmd /k "cd /d ""%FRONTEND_DIR%"" && npm run dev"
+    popd
+    timeout /t 15 /nobreak >nul
     echo [INFO] Opening browser to http://localhost:3001
-    timeout /t 5 /nobreak >nul
-    start http://localhost:3001
+    start "" "http://localhost:3001"
+
 ) else (
     echo [ERROR] Frontend dashboard not found
 )
+
+echo [INFO] Continuing startup...
+timeout /t 5 /nobreak >nul
+
+REM 6. Start Telegram Bot
+echo [INFO] Starting Telegram Bot...
 cd /d "%~dp0"
-timeout /t 15 /nobreak >nul
+if exist "integrations\telegram_bot.py" (
+    if "%TELEGRAM_BOT_TOKEN%"=="" (
+        echo [WARN] TELEGRAM_BOT_TOKEN not set. Skipping Telegram Bot startup.
+    ) else (
+        echo [INFO] Launching Telegram Bot in a separate window...
+        start /MIN "Telegram Bot" cmd /k "python integrations/telegram_bot.py"
+    )
+) else (
+    echo [WARN] Telegram bot script not found. Skipping.
+)
+cd /d "%~dp0"
 
 echo.
 echo ==================================================
@@ -161,5 +227,4 @@ echo [IMPORTANT] The system will be ready when both windows show successful star
 echo.
 echo To stop all services, run stop_bldr.bat
 echo.
-echo Press any key to continue...
-pause >nul
+echo Startup script completed. Services are running in background windows.

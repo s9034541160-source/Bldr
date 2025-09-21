@@ -71,7 +71,8 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
-import { apiService } from '../services/api';
+import { apiService, unwrap } from '../services/api';
+import ErrorBoundary from './ErrorBoundary';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -277,12 +278,13 @@ const TemplateManagementSystem: React.FC = () => {
         language: 'ru',
         max_results: 20
       });
-      
-      if (result.status === 'success') {
-        setSearchResults(result.results || []);
-        message.success(`Найдено ${result.total_found} шаблонов`);
+      const { ok, data, error } = unwrap<any>(result);
+      if (ok) {
+        setSearchResults((data?.results) || []);
+        const total = data?.total_found ?? (data?.results?.length || 0);
+        message.success(`Найдено ${total} шаблонов`);
       } else {
-        message.error(`Ошибка поиска: ${result.error}`);
+        message.error(`Ошибка поиска: ${String(error)}`);
       }
     } catch (error) {
       console.error('Error searching templates:', error);
@@ -298,12 +300,12 @@ const TemplateManagementSystem: React.FC = () => {
         template_url: searchResult.url,
         template_name: searchResult.title
       });
-      
-      if (result.status === 'success') {
+      const { ok, error } = unwrap<any>(result);
+      if (ok) {
         message.success('Шаблон успешно загружен');
-        loadTemplates(); // Перезагружаем список шаблонов
+        loadTemplates();
       } else {
-        message.error(`Ошибка загрузки: ${result.error}`);
+        message.error(`Ошибка загрузки: ${String(error)}`);
       }
     } catch (error) {
       console.error('Error downloading template:', error);
@@ -320,17 +322,17 @@ const TemplateManagementSystem: React.FC = () => {
         company_info: companyInfo,
         project_info: projectInfo
       });
-      
-      if (result.status === 'success') {
+      const { ok, data, error } = unwrap<any>(result);
+      if (ok) {
         message.success('Шаблон успешно адаптирован');
         notification.success({
           message: 'Адаптация завершена',
-          description: `Файл сохранен: ${result.adapted_file}`,
+          description: `Файл сохранен: ${data?.adapted_file || 'см. результаты'}`,
           duration: 10
         });
         setAdaptationModalVisible(false);
       } else {
-        message.error(`Ошибка адаптации: ${result.error}`);
+        message.error(`Ошибка адаптации: ${String(error)}`);
       }
     } catch (error) {
       console.error('Error adapting template:', error);
@@ -491,8 +493,8 @@ const TemplateManagementSystem: React.FC = () => {
       )
     }
   ];  
-  r
-eturn (
+  return (
+    <ErrorBoundary>
     <div style={{ padding: '24px' }}>
       {/* Заголовок */}
       <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
@@ -1216,6 +1218,7 @@ eturn (
         </div>
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 };
 

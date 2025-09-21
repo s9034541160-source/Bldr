@@ -196,3 +196,69 @@ ALGORITHM=HS256
 
 ---
 **Итог:** Система авторизации полностью восстановлена и готова к использованию. Все проблемы с фронтендом исправлены, токены работают корректно, CORS настроен правильно.
+
+# Authentication Fix Report
+
+## Issue
+Users were encountering a "Login error: Not Found" when trying to authenticate through the frontend application.
+
+## Root Cause Analysis
+1. **Proxy Configuration**: The Vite proxy configuration was not forwarding `/token` requests to the backend server
+2. **API Service**: The getToken method was using an incorrect baseURL that conflicт with the proxy setup
+
+## Solution Implemented
+
+### 1. Updated Vite Proxy Configuration
+Added proxy rule for `/token` endpoint in `vite.config.ts`:
+
+```
+server: {
+  proxy: {
+    // Existing proxies
+    '/api': {
+      target: 'http://127.0.0.1:8000',
+      changeOrigin: true,
+      secure: false
+    },
+    // NEW: Proxy for authentication token endpoint
+    '/token': {
+      target: 'http://127.0.0.1:8000',
+      changeOrigin: true,
+      secure: false
+    },
+    '/ws': {
+      target: 'ws://127.0.0.1:8000',
+      ws: true,
+      changeOrigin: true
+    }
+  }
+}
+```
+
+### 2. Fixed getToken Method
+Updated the baseURL in the getToken method in `src/services/api.ts`:
+
+```
+// Before (incorrect)
+baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '/api',
+
+// After (correct)
+baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '',
+```
+
+## Verification
+- ✅ Direct backend authentication works: `curl -X POST "http://localhost:8000/token"`
+- ✅ Frontend proxy authentication works: `curl -X POST "http://localhost:3003/token"`
+- ✅ Both return valid JWT tokens
+
+## Files Modified
+1. `web/bldr_dashboard/vite.config.ts` - Added proxy configuration for `/token`
+2. `web/bldr_dashboard/src/services/api.ts` - Fixed baseURL in getToken method
+
+## Testing
+The authentication flow now works correctly:
+1. User enters credentials in the login form
+2. Frontend calls getToken method
+3. Request is properly proxied to backend `/token` endpoint
+4. Backend authenticates user and returns JWT token
+5. Frontend receives token and establishes authenticated session

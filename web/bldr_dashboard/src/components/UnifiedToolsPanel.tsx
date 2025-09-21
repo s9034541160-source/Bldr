@@ -36,8 +36,18 @@ import {
   HistoryOutlined
 } from '@ant-design/icons';
 import { apiService } from '../services/api';
+import { 
+  ToolConfigGenerateLetter,
+  ToolConfigAnalyzeTender,
+  ToolConfigAnalyzeImage,
+  ToolConfigCalculateEstimate,
+  ToolConfigAutoBudget,
+  ToolConfigSearchRAG,
+  ToolConfigTextToSpeech
+} from './tool-configs/Configs';
 import ToolResultDisplay from './ToolResultDisplay';
 import ToolExecutionHistory from './ToolExecutionHistory';
+import ErrorBoundary from './ErrorBoundary';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -89,6 +99,7 @@ const UnifiedToolsPanel: React.FC = () => {
   const [toolModalVisible, setToolModalVisible] = useState(false);
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
   const [toolParams, setToolParams] = useState<Record<string, any>>({});
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [lastResults, setLastResults] = useState<Record<string, StandardResponse>>({});
   const [showHistory, setShowHistory] = useState(false);
 
@@ -149,7 +160,18 @@ const UnifiedToolsPanel: React.FC = () => {
         [toolName]: result
       }));
 
-      // Add to history
+      // Persist to local history for dashboards
+      try {
+        const saved = localStorage.getItem('bldr_tool_execution_history');
+        const arr = saved ? JSON.parse(saved) : [];
+        const entry = {
+          ...result,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        };
+        const trimmed = [...arr, entry].slice(-100);
+        localStorage.setItem('bldr_tool_execution_history', JSON.stringify(trimmed));
+      } catch {}
+
       if ((window as any).addToolExecutionToHistory) {
         (window as any).addToolExecutionToHistory(result);
       }
@@ -244,6 +266,7 @@ const UnifiedToolsPanel: React.FC = () => {
       project_management: 'purple',
       core_rag: 'green',
       data_processing: 'gray',
+      audio: 'cyan',
       other: 'default',
     };
     return colors[category] || colors.other;
@@ -258,9 +281,36 @@ const UnifiedToolsPanel: React.FC = () => {
       project_management: '📅',
       core_rag: '🔍',
       data_processing: '⚙️',
+      audio: '🔊',
       other: '🔧',
     };
     return icons[category] || icons.other;
+  };
+
+  const getToolConfigComponent = (toolName: string) => {
+    const map: Record<string, React.FC<any>> = {
+      generate_letter: ToolConfigGenerateLetter,
+      analyze_tender: ToolConfigAnalyzeTender,
+      analyze_image: ToolConfigAnalyzeImage,
+      calculate_estimate: ToolConfigCalculateEstimate,
+      auto_budget: ToolConfigAutoBudget,
+      search_rag_database: ToolConfigSearchRAG,
+      text_to_speech: ToolConfigTextToSpeech,
+    };
+    return map[toolName];
+  };
+
+  const getPresets = (toolName: string) => {
+    try {
+      const raw = localStorage.getItem(`bldr_tool_presets_${toolName}`);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  };
+
+  const savePreset = (toolName: string, name: string, params: any) => {
+    const list = getPresets(toolName);
+    const next = [...list.filter((p: any) => p.name !== name), { name, params }];
+    localStorage.setItem(`bldr_tool_presets_${toolName}`, JSON.stringify(next));
   };
 
   const renderToolCard = (tool: ToolInfo) => {
@@ -274,6 +324,8 @@ const UnifiedToolsPanel: React.FC = () => {
       <Card
         key={tool.name}
         size="small"
+        hoverable
+        onClick={() => openToolModal(tool)}
         title={
           <Space>
             <span>{categoryIcon}</span>
@@ -363,6 +415,7 @@ const UnifiedToolsPanel: React.FC = () => {
   }
 
   return (
+    <ErrorBoundary>
     <div>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
@@ -593,45 +646,63 @@ const UnifiedToolsPanel: React.FC = () => {
 
             <Divider />
 
-            <h4>Parameters (**kwargs)</h4>
-            <div style={{ marginBottom: 16 }}>
-              <Button onClick={addParameter} size="small">
-                + Add Parameter
-              </Button>
-            </div>
-
-            {Object.keys(toolParams).length === 0 ? (
-              <p style={{ color: '#666', fontStyle: 'italic' }}>
-                No parameters set. Click \"Add Parameter\" to add **kwargs.
-              </p>
-            ) : (
-              <div>
-                {Object.entries(toolParams).map(([key, value]) => (
-                  <div key={key} style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-                    <Input
-                      style={{ width: '30%' }}
-                      value={key}
-                      readOnly
-                      size="small"
-                    />
-                    <Input
-                      style={{ flex: 1 }}
-                      value={value}
-                      onChange={(e) => updateParameter(key, e.target.value)}
-                      placeholder="Value"
-                      size="small"
-                    />
-                    <Button
-                      size="small"
-                      danger
-                      onClick={() => removeParameter(key)}
-                    >
-                      ❌
-                    </Button>
+            {/* Per-tool configuration */}
+            {(() => {
+              const Cmp = getToolConfigComponent(selectedTool.name);
+              if (Cmp) {
+                return <Cmp value={toolParams} onChange={setToolParams} />;
+              }
+              return (
+                <>
+                  <h4>Parameters (**kwargs)</h4>
+                  <div style={{ marginBottom: 16 }}>
+                    <Button onClick={addParameter} size="small">+ Add Parameter</Button>
                   </div>
+                  {Object.keys(toolParams).length === 0 ? (
+                    <p style={{ color: '#666', fontStyle: 'italic' }}>
+                      No parameters set. Click "Add Parameter" to add **kwargs.
+                    </p>
+                  ) : (
+                    <div>
+                      {Object.entries(toolParams).map(([key, value]) => (
+                        <div key={key} style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
+                          <Input style={{ width: '30%' }} value={key} readOnly size="small" />
+                          <Input style={{ flex: 1 }} value={value as any}
+                            onChange={(e) => updateParameter(key, (e.target as any).value)} placeholder="Value" size="small" />
+                          <Button size="small" danger onClick={() => removeParameter(key)}>❌</Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* Presets */}
+            <Divider />
+            <h4>Presets</h4>
+            <Space style={{ marginBottom: 12 }}>
+              <Select placeholder="Выберите пресет" style={{ width: 220 }} allowClear
+                value={selectedPreset || undefined}
+                onChange={(v) => {
+                  setSelectedPreset(v as string);
+                  const list = getPresets(selectedTool.name);
+                  const found = list.find((p: any) => p.name === v);
+                  if (found) setToolParams(found.params || {});
+                }}
+              >
+                {getPresets(selectedTool.name).map((p: any) => (
+                  <Option key={p.name} value={p.name}>{p.name}</Option>
                 ))}
-              </div>
-            )}
+              </Select>
+              <Button size="small" onClick={() => {
+                const name = prompt('Название пресета:');
+                if (name && name.trim()) {
+                  savePreset(selectedTool.name, name.trim(), toolParams);
+                  setSelectedPreset(name.trim());
+                }
+              }}>Сохранить как пресет</Button>
+            </Space>
 
             {lastResults[selectedTool.name] && (
               <>
@@ -652,6 +723,7 @@ const UnifiedToolsPanel: React.FC = () => {
         )}
       </Modal>
     </div>
+    </ErrorBoundary>
   );
 };
 

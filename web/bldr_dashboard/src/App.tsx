@@ -28,7 +28,7 @@ const Projects = lazy(() => import('./components/Projects'));
 const UnifiedToolsPanel = lazy(() => import('./components/UnifiedToolsPanel'));
 const TemplateManagementSystem = lazy(() => import('./components/TemplateManagementSystem'));
 const DiagnosticPanel = lazy(() => import('./components/DiagnosticPanel'));
-const CoordinatorConfigFix = lazy(() => import('./components/CoordinatorConfigFix'));
+
 // Removed SimpleTest import since we're hiding the Test tab
 import { useStore } from './store';
 import { apiService } from './services/api';
@@ -44,12 +44,36 @@ const App: React.FC = () => {
   useEffect(() => {
     setIsClient(true);
     
-    // Initialize user from localStorage if available
-    const savedToken = localStorage.getItem('auth-token');
-    if (savedToken) {
-      // Set user with the token - you might need to adjust this based on your auth logic
-      setUser({ token: savedToken, role: 'user', username: 'default' });
-    }
+    // Initialize user from localStorage if available (preserve role and username)
+    try {
+      const savedToken = localStorage.getItem('auth-token');
+      const savedUserStr = localStorage.getItem('auth-user');
+      if (savedToken) {
+        let username = 'user';
+        let role = 'user';
+        // Prefer saved user object
+        if (savedUserStr) {
+          try {
+            const su = JSON.parse(savedUserStr);
+            if (su && typeof su === 'object') {
+              if (su.username) username = su.username;
+              if (su.role) role = su.role;
+            }
+          } catch {}
+        } else if (savedToken.includes('.')) {
+          // Fallback: parse JWT payload for sub/role
+          try {
+            const payload = JSON.parse(atob(savedToken.split('.')[1]));
+            if (payload?.sub) username = payload.sub;
+            if (payload?.role) role = payload.role;
+          } catch {}
+        } else if (savedToken === 'disabled_auth_token') {
+          username = 'anonymous';
+          role = 'user';
+        }
+        setUser({ token: savedToken, role, username });
+      }
+    } catch {}
   }, [setUser]);
 
   // Health check on app mount
@@ -57,8 +81,14 @@ const App: React.FC = () => {
     const checkHealth = async () => {
       try {
         const res = await apiService.getHealth();
-        if (res.status !== 'ok') {
-          message.warning(`Сервер частично down: DB=${res.components?.db}, Celery=${res.components?.celery}`);
+        // Check if any component is not connected/running
+        const dbStatus = res.components?.db;
+        const celeryStatus = res.components?.celery;
+        
+        // Show warning if any component is down (not 'connected' or 'running')
+        if ((dbStatus && dbStatus !== 'connected' && dbStatus !== 'skipped') || 
+            (celeryStatus && celeryStatus !== 'running')) {
+          message.warning(`Сервер частично down: DB=${dbStatus || 'undefined'}, Celery=${celeryStatus || 'undefined'}`);
         }
       } catch (e: any) {
         message.error('Backend недоступен — запустите uvicorn');
@@ -99,8 +129,7 @@ const App: React.FC = () => {
         return <Settings />;
       case 'pro':
         return <ProFeatures />;
-      case 'coordinator-fix':
-        return <CoordinatorConfigFix />;
+
       default:
         return <ControlPanel />; // Default to ControlPanel
     }
@@ -213,11 +242,7 @@ const App: React.FC = () => {
                 icon: <SettingOutlined />,
                 label: 'Pro Tools',
               },
-              {
-                key: 'coordinator-fix',
-                icon: <ToolOutlined />,
-                label: '🔧 Coordinator Fix',
-              },
+
             ]}
             onClick={({ key }) => setActiveTab(key)}
           />

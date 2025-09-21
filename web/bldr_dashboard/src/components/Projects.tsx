@@ -4,7 +4,8 @@ import {
   Project, 
   ProjectCreate, 
   ProjectUpdate,
-  ProjectFile 
+  ProjectFile,
+  unwrap 
 } from '../services/api';
 import { 
   Button, 
@@ -70,10 +71,35 @@ const Projects: React.FC = () => {
     }
   };
 
-  const handleCreateProject = async (values: ProjectCreate) => {
+  const handleCreateProject = async (values: ProjectCreate & { folderPath?: string }) => {
     try {
-      await apiService.createProject(values);
+      // Separate folder path from project data
+      const { folderPath, ...projectData } = values;
+      
+      // Create the project
+      const res = await apiService.createProject(projectData);
+      const { ok, error } = unwrap<any>(res);
+      if (!ok) throw new Error(String(error));
+      
+      const newProject = res.data;
       message.success('Project created successfully');
+      
+      // If folder path is provided, automatically scan and attach files
+      if (folderPath && newProject?.id) {
+        try {
+          message.loading(`Сканирование папки ${folderPath}...`, 0);
+          
+          // Use the backend's directory scanning functionality
+          const result = await apiService.scanDirectoryForProject(newProject.id, folderPath);
+          message.destroy();
+          message.success(`${result.added} файлов из папки просканировано и добавлено успешно`);
+        } catch (scanErr: any) {
+          message.destroy();
+          console.error('Ошибка сканирования папки:', scanErr);
+          message.error(scanErr.response?.data?.detail || 'Не удалось просканировать папку');
+        }
+      }
+      
       setIsModalVisible(false);
       form.resetFields();
       fetchProjects(); // Refresh the list
@@ -87,7 +113,9 @@ const Projects: React.FC = () => {
     if (!editingProject) return;
     
     try {
-      await apiService.updateProject(editingProject.id, values);
+      const res = await apiService.updateProject(editingProject.id, values);
+      const { ok, error } = unwrap<any>(res);
+      if (!ok) throw new Error(String(error));
       message.success('Project updated successfully');
       setIsEditModalVisible(false);
       editForm.resetFields();
@@ -101,7 +129,9 @@ const Projects: React.FC = () => {
 
   const handleDeleteProject = async (id: string) => {
     try {
-      await apiService.deleteProject(id);
+      const res = await apiService.deleteProject(id);
+      const { ok, error } = unwrap<any>(res);
+      if (!ok) throw new Error(String(error));
       message.success('Project deleted successfully');
       fetchProjects(); // Refresh the list
     } catch (err: any) {
@@ -155,7 +185,9 @@ const Projects: React.FC = () => {
     
     try {
       const files = fileList.map(file => file.originFileObj || file);
-      await apiService.addProjectFiles(selectedProject.id, files);
+      const res = await apiService.addProjectFiles(selectedProject.id, files);
+      const { ok, error } = unwrap<any>(res);
+      if (!ok) throw new Error(String(error));
       message.success(`${files.length} files attached successfully`);
       
       // Refresh files list
@@ -176,7 +208,9 @@ const Projects: React.FC = () => {
     
     try {
       const result = await apiService.scanProjectFiles(selectedProject.id);
-      message.success(`Scan completed: ${result.files_count} files, ${result.smeta_count} estimates, ${result.rd_count} RD files`);
+      const { ok, data, error } = unwrap<any>(result);
+      if (!ok) throw new Error(String(error));
+      message.success(`Scan completed: ${data.files_count} files, ${data.smeta_count} estimates, ${data.rd_count} RD files`);
       
       // Refresh files list
       const filesData = await apiService.getProjectFiles(selectedProject.id);
@@ -191,45 +225,33 @@ const Projects: React.FC = () => {
     if (!selectedProject) return;
     
     try {
-      // Create a hidden input element for directory selection
-      const input = document.createElement('input');
-      input.type = 'file';
-      // @ts-ignore: webkitdirectory is not in the standard but supported by browsers
-      input.webkitdirectory = true;
-      input.multiple = true;
+      // Prompt user for directory path
+      const directoryPath = prompt('Введите путь к папке с файлами проекта:');
       
-      input.onchange = async (e: any) => {
-        const files = Array.from(e.target.files);
-        if (files.length > 0) {
-          message.loading(`Processing ${files.length} files from directory...`, 0);
+      if (directoryPath) {
+        message.loading(`Сканирование папки ${directoryPath}...`, 0);
+        
+        try {
+          // Use the backend's directory scanning functionality
+          const result = await apiService.scanDirectoryForProject(selectedProject.id, directoryPath);
+          message.destroy();
+          message.success(`${result.added} файлов из папки просканировано и добавлено успешно`);
           
-          try {
-            // For directory upload, we'll send the directory path to backend
-            // The backend will scan the directory and add files
-            // For now, we'll upload all files individually
-            const fileObjects = files.map((file: any) => file);
-            await apiService.addProjectFiles(selectedProject.id, fileObjects);
-            message.destroy();
-            message.success(`${files.length} files from directory attached successfully`);
-            
-            // Refresh files list
-            const filesData = await apiService.getProjectFiles(selectedProject.id);
-            setProjectFiles(filesData);
-            
-            // Refresh projects list to update files count
-            fetchProjects();
-          } catch (err: any) {
-            message.destroy();
-            console.error('Error attaching directory files:', err);
-            message.error(err.response?.data?.detail || 'Failed to attach directory files');
-          }
+          // Refresh files list
+          const filesData = await apiService.getProjectFiles(selectedProject.id);
+          setProjectFiles(filesData);
+          
+          // Refresh projects list to update files count
+          fetchProjects();
+        } catch (err: any) {
+          message.destroy();
+          console.error('Ошибка сканирования папки:', err);
+          message.error(err.response?.data?.detail || 'Не удалось просканировать папку');
         }
-      };
-      
-      input.click();
+      }
     } catch (err: any) {
-      console.error('Error selecting directory:', err);
-      message.error(err.response?.data?.detail || 'Failed to select directory');
+      console.error('Ошибка выбора папки:', err);
+      message.error(err.response?.data?.detail || 'Не удалось выбрать папку');
     }
   };
 
@@ -467,6 +489,13 @@ const Projects: React.FC = () => {
             label="Статус"
           >
             <Input defaultValue="planned" />
+          </Form.Item>
+          
+          <Form.Item
+            name="folderPath"
+            label="Путь к папке с файлами проекта (опционально)"
+          >
+            <Input placeholder="C:\path\to\project\folder" />
           </Form.Item>
           
           <Form.Item>

@@ -232,7 +232,7 @@ const EnhancedRAGModule: React.FC = () => {
 
   const connectWebSocket = () => {
     const token = localStorage.getItem('auth-token');
-    const wsUrl = `ws://localhost:8000/ws/rag-training${token ? `?token=${token}` : ''}`;
+    const wsUrl = `ws://localhost:3001/ws/rag-training${token ? `?token=${token}` : ''}`;
     
     wsRef.current = new WebSocket(wsUrl);
     

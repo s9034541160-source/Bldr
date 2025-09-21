@@ -17,6 +17,8 @@ import EstimateAnalyzer from './EstimateAnalyzer';
 import ImageAnalyzer from './ImageAnalyzer';
 import DocumentAnalyzer from './DocumentAnalyzer';
 import TenderAnalyzer from './TenderAnalyzer';
+import { useSocket } from '../hooks/useSocket';
+import { apiService } from '../services/api';
 
 const { TabPane } = Tabs;
 
@@ -34,135 +36,58 @@ const ToolsInterface: React.FC = () => {
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
+  const { socket, connected } = useSocket();
 
-  // WebSocket для real-time уведомлений
+  // Subscribe to normalized task_update events
   useEffect(() => {
-    const connectWebSocket = () => {
-      const wsUrl = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log('WebSocket подключен к Tools Interface');
-        setWsConnected(true);
-        // Подписываемся на уведомления о задачах
-        ws.send(JSON.stringify({
-          type: 'subscribe',
-          subscription_type: 'jobs'
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          
-          if (message.type === 'job_update') {
-            // Обновляем статус активных задач
-            setActiveJobs(prev => {
-              const updated = prev.map(job => 
-                job.job_id === message.job_id 
-                  ? { ...job, ...message.data }
-                  : job
-              );
-              
-              // Если задача не найдена, добавляем её
-              if (!updated.find(job => job.job_id === message.job_id)) {
-                updated.push({
-                  job_id: message.job_id,
-                  tool_type: message.tool_type || 'unknown',
-                  status: message.data.status,
-                  progress: message.data.progress,
-                  message: message.data.message,
-                  created_at: new Date().toISOString()
-                });
-              }
-              
-              return updated;
-            });
-          }
-          
-          if (message.type === 'new_job') {
-            // Добавляем новую задачу
-            setActiveJobs(prev => [...prev, {
-              job_id: message.job_id,
-              tool_type: message.tool_type,
-              status: 'pending',
-              progress: 0,
-              message: 'Задача создана',
-              created_at: message.timestamp
-            }]);
-          }
-          
-          if (message.type === 'job_completed') {
-            // Убираем завершенную задачу через 5 секунд
-            setTimeout(() => {
-              setActiveJobs(prev => 
-                prev.filter(job => job.job_id !== message.job_id)
-              );
-            }, 5000);
-            
-            // Добавляем уведомление
-            setNotifications(prev => [...prev, {
-              id: Date.now(),
-              type: message.success ? 'success' : 'error',
-              message: `Задача ${message.tool_type} ${message.success ? 'завершена' : 'завершилась с ошибкой'}`,
-              timestamp: new Date().toISOString()
-            }]);
-          }
-          
-        } catch (error) {
-          console.error('Ошибка обработки WebSocket сообщения:', error);
+    setWsConnected(connected);
+    if (!socket) return;
+    const handle = (data: any) => {
+      setActiveJobs(prev => {
+        const updated = prev.map(job => job.job_id === (data.id || data.job_id) ? { ...job, status: data.status, progress: data.progress, message: data.message } : job);
+        if (!updated.find(job => job.job_id === (data.id || data.job_id))) {
+          updated.push({
+            job_id: data.id || data.job_id,
+            tool_type: data.type || 'unknown',
+            status: data.status || 'running',
+            progress: data.progress ?? 0,
+            message: data.message || 'Обновление задачи',
+            created_at: new Date().toISOString()
+          });
         }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket ошибка:', error);
-        setWsConnected(false);
-      };
-
-      ws.onclose = () => {
-        console.log('WebSocket отключен, переподключение...');
-        setWsConnected(false);
-        setTimeout(connectWebSocket, 3000);
-      };
-
-      return ws;
+        return updated;
+      });
     };
+    socket.on('task_update', handle);
+    return () => socket.off('task_update', handle);
+  }, [socket, connected]);
 
-    const ws = connectWebSocket();
-    return () => ws.close();
-  }, []);
-
-  // Загружаем активные задачи при монтировании
+  // Загружаем активные задачи при монтировании (через apiService)
   useEffect(() => {
     const fetchActiveJobs = async () => {
       try {
-        const response = await fetch('/api/tools/jobs/active');
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.jobs) {
-            const jobs: ActiveJob[] = [];
-            Object.entries(data.jobs).forEach(([toolType, toolJobs]: [string, any]) => {
-              toolJobs.forEach((job: any) => {
-                jobs.push({
-                  job_id: job.job_id,
-                  tool_type: toolType,
-                  status: job.status,
-                  progress: job.progress,
-                  message: job.message,
-                  created_at: job.created_at
-                });
-              });
+        const byTool = await apiService.getActiveJobs();
+        const jobs: ActiveJob[] = [];
+        Object.entries(byTool).forEach(([toolType, toolJobs]: [string, any]) => {
+          (toolJobs as any[]).forEach((job: any) => {
+            jobs.push({
+              job_id: job.job_id,
+              tool_type: toolType,
+              status: job.status,
+              progress: job.progress,
+              message: job.message,
+              created_at: job.created_at
             });
-            setActiveJobs(jobs);
-          }
-        }
+          });
+        });
+        setActiveJobs(jobs);
       } catch (error) {
         console.error('Ошибка загрузки активных задач:', error);
       }
     };
 
     fetchActiveJobs();
-    const interval = setInterval(fetchActiveJobs, 10000); // Обновляем каждые 10 секунд
+    const interval = setInterval(fetchActiveJobs, 10000);
     return () => clearInterval(interval);
   }, []);
 

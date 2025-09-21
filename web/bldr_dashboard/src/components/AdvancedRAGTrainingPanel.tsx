@@ -286,7 +286,7 @@ const AdvancedRAGTrainingPanel: React.FC = () => {
   const connectWebSocket = () => {
     // Get token from localStorage with correct key
     const token = localStorage.getItem('auth-token');
-    const wsUrl = `ws://localhost:8000/ws${token ? `?token=${token}` : ''}`;
+    const wsUrl = `ws://localhost:3001/ws${token ? `?token=${token}` : ''}`;
     
     wsRef.current = new WebSocket(wsUrl);
     

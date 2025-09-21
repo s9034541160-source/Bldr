@@ -4,6 +4,13 @@ import { UploadOutlined, FolderOpenOutlined, InfoCircleOutlined } from '@ant-des
 import { apiService } from '../services/api';
 import type { ColumnsType } from 'antd/es/table';
 
+// Add type definitions for the Directory Picker API
+declare global {
+  interface Window {
+    showDirectoryPicker?: () => Promise<any>;
+  }
+}
+
 const { Title, Text, Paragraph } = Typography;
 const { Panel } = Collapse;
 
@@ -25,7 +32,7 @@ const FileManager: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      const websocket = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
+      const websocket = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
       
       websocket.onopen = () => {
         setWsStatus('Connected');
@@ -158,6 +165,52 @@ const FileManager: React.FC = () => {
     }
   };
 
+  // Function to handle folder picker dialog using modern web API
+  const handleFolderPicker = async () => {
+    // Check if the browser supports showDirectoryPicker
+    if (window.showDirectoryPicker) {
+      try {
+        // Use the modern directory picker API
+        const dirHandle = await window.showDirectoryPicker();
+        const folderPath = dirHandle.name;
+        // For now, we'll just use the directory name as the path
+        // In a real implementation, we might want to handle the directory handle differently
+        handleFolderSelect(folderPath);
+      } catch (error) {
+        // User cancelled the dialog or there was an error
+        console.log('Directory picker was cancelled or failed:', error);
+        // Fall back to manual input
+        handleManualFolderSelect();
+      }
+    } else {
+      // Fall back to manual input for older browsers
+      handleManualFolderSelect();
+    }
+  };
+
+  // Function to handle folder picker for training
+  const handleTrainingFolderPicker = async () => {
+    // Check if the browser supports showDirectoryPicker
+    if (window.showDirectoryPicker) {
+      try {
+        // Use the modern directory picker API
+        const dirHandle = await window.showDirectoryPicker();
+        const folderPath = dirHandle.name;
+        // For now, we'll just use the directory name as the path
+        // In a real implementation, we might want to handle the directory handle differently
+        handleFolderSelect(folderPath);
+      } catch (error) {
+        // User cancelled the dialog or there was an error
+        console.log('Directory picker was cancelled or failed:', error);
+        // Fall back to manual input
+        handleManualFolderSelect();
+      }
+    } else {
+      // Fall back to manual input for older browsers
+      handleManualFolderSelect();
+    }
+  };
+
   return (
     <div style={{ padding: '24px' }}>
       <Card title="Менеджер файлов" bordered={false}>
@@ -195,6 +248,13 @@ const FileManager: React.FC = () => {
                 style={{ marginTop: 12, marginBottom: 16 }}
               />
               <Button 
+                icon={<FolderOpenOutlined />}
+                onClick={handleFolderPicker}
+                style={{ marginRight: 12 }}
+              >
+                Выбрать папку
+              </Button>
+              <Button 
                 type="primary" 
                 onClick={scanFiles} 
                 loading={loading}
@@ -212,7 +272,7 @@ const FileManager: React.FC = () => {
                   <div style={{ marginTop: 16 }}>
                     <Button 
                       icon={<FolderOpenOutlined />} 
-                      onClick={handleManualFolderSelect}
+                      onClick={handleTrainingFolderPicker}
                     >
                       Выбрать папку для обучения
                     </Button>

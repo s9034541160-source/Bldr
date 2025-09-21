@@ -829,6 +829,63 @@ Response (explain: how addressed, roles, steps, time):"""
                 return self._direct_response(query)
             return f"Ошибка обработки: {str(e)[:100]}. Перефразируйте запрос."
     
+    def generate_final_response(self, query: str, plan: Dict[str, Any], execution_results: List[Dict[str, Any]], context_used_count: int = 0) -> str:
+        """
+        Generate concise actionable final response using plan and execution results.
+        Output format:
+        Ответ: ...
+        Нормы и ссылки: ... (bullet list with codes/refs if available)
+        """
+        try:
+            # Limit size to avoid prompt bloat
+            plan_json = json.dumps(plan or {}, ensure_ascii=False, indent=2)
+            if len(plan_json) > 4000:
+                plan_json = plan_json[:4000] + "\n... (truncated)"
+            results_json = json.dumps(execution_results or [], ensure_ascii=False, indent=2)
+            if len(results_json) > 6000:
+                results_json = results_json[:6000] + "\n... (truncated)"
+
+            # Conversation context (compressed)
+            conversation_context = ""
+            if self.request_context and "user_id" in self.request_context and conversation_history:
+                user_id = self.request_context["user_id"]
+                try:
+                    conversation_context = conversation_history.get_formatted_history(user_id, max_tokens=600)
+                except Exception:
+                    conversation_context = ""
+
+            system = (
+                "Ты Координатор системы Bldr Empire v2. Всегда давай краткий, прикладной итог (actionable). "
+                "Если вопрос про нормы, называй точные документы/коды. Не показывай цепочку размышлений."
+            )
+            prompt = f"""{system}
+
+Диалог (сжатый контекст):
+{conversation_context}
+
+Запрос пользователя:
+{query}
+
+План выполнения (если есть):
+{plan_json}
+
+Результаты инструментов (если есть):
+{results_json}
+
+Сгенерируй финальный ответ строго в формате:
+Ответ: <краткий итог по существу, без лишней воды>
+Нормы и ссылки: <если есть — маркированный список со ссылками/кодами документов; если нет — '—'>
+"""
+            response = self.llm.invoke(prompt)
+            text = response.content if hasattr(response, 'content') else str(response)
+            # Удалить возможные thinking-теги
+            text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL).strip()
+            return text
+        except Exception as e:
+            logger.error(f"generate_final_response error: {e}")
+            # Fallback: convert plan to natural language
+            return self._convert_plan_to_natural_language(plan or {}, query)
+
     def generate_response(self, query: str) -> Dict[str, Any]:
         """
         API entry-point (for bldr_api.py): Generate response with status/plan.

@@ -25,6 +25,7 @@ export const useSocket = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<string, Set<(data: any) => void>>>(new Map());
   const reconnectTimer = useRef<number | null>(null);
+  const errorCount = useRef(0); // Track error count to reduce message spam
 
   useEffect(() => {
     // Don't connect if no user token (keep same behavior)
@@ -35,20 +36,23 @@ export const useSocket = () => {
     const base = getApiBase();
     const proto = base.startsWith('https') ? 'wss' : 'ws';
     const trimmed = base.replace(/\/$/, '');
-    const wsUrl = (import.meta as any).env?.VITE_WS_URL || `${proto}://${trimmed.replace(/^https?:\/\//, '')}/ws`;
+    // Use the proxy path /ws instead of constructing a full URL
+    const wsUrl = '/ws';
 
     const connect = () => {
       try {
-        const ws = new WebSocket(wsUrl);
+        // Add token to WebSocket URL as query parameter
+        const wsUrlWithToken = `${wsUrl}?token=${encodeURIComponent(user.token)}`;
+        const ws = new WebSocket(wsUrlWithToken);
         wsRef.current = ws;
 
         ws.onopen = () => {
+          errorCount.current = 0; // Reset error count on successful connection
           setConnected(true);
-          message.success('WebSocket подключен');
-          // Optional subscription message for jobs channel (backend dependent)
-          try {
-            ws.send(JSON.stringify({ type: 'subscribe', subscription_type: 'jobs' }));
-          } catch {}
+          // Only show success message if we had previous errors or on first connection
+          if (errorCount.current > 0) {
+            message.success('WebSocket подключен');
+          }
         };
 
         ws.onclose = () => {
@@ -64,7 +68,12 @@ export const useSocket = () => {
 
         ws.onerror = (err: any) => {
           setConnected(false);
-          message.warning('WS ошибка, переключаемся на polling');
+          console.error('WebSocket error:', err);
+          errorCount.current++;
+          // Only show error message every 5 errors to reduce spam
+          if (errorCount.current % 5 === 1) {
+            message.warning('WS ошибка, переключаемся на polling');
+          }
         };
 
         ws.onmessage = (event) => {
@@ -136,6 +145,12 @@ export const useSocket = () => {
         };
       } catch (e) {
         setConnected(false);
+        console.error('WebSocket connection error:', e);
+        errorCount.current++;
+        // Only show error message every 5 errors to reduce spam
+        if (errorCount.current % 5 === 1) {
+          message.warning('WS ошибка, переключаемся на polling');
+        }
       }
     };
 

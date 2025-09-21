@@ -8,18 +8,14 @@ export default defineConfig({
     host: 'localhost',
     port: 3001,  // Fixed port to match documentation and avoid constant changes
     proxy: {
+      // Proxy all API routes to backend
       '/api': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      },
-      '/token': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         secure: false
       },
-      '/health': {
+      // Proxy auth token endpoint to backend
+      '/token': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         secure: false

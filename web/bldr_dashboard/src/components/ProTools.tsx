@@ -132,10 +132,10 @@ const ProFeatures: React.FC = () => {
   
   // State for pro metrics from dashboard
   const [proMetrics, setProMetrics] = useState({
-    budgetProfit: 300000000, // 300 млн руб.
-    budgetROI: 18, // 18%
-    projectCount: 15,
-    complianceRate: 99 // 99%
+    budgetProfit: 0,
+    budgetROI: 0,
+    projectCount: 0,
+    complianceRate: 0
   });
   
   // Get projects from store
@@ -145,6 +145,40 @@ const ProFeatures: React.FC = () => {
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  // Calculate real metrics from projects
+  useEffect(() => {
+    if (projects && projects.length > 0) {
+      // Calculate real metrics
+      const projectCount = projects.length;
+      let totalProfit = 0;
+      let totalROI = 0;
+      let complianceCount = 0;
+      let totalComplianceChecks = 0;
+      
+      projects.forEach(project => {
+        // Add project profit (if available)
+        totalProfit += project.roi > 0 ? (project.roi / 100) * 1000000 : 0; // Estimate based on ROI
+        
+        // Add project ROI
+        totalROI += project.roi || 0;
+        
+        // Estimate compliance (using files count as a proxy)
+        complianceCount += project.files_count || 0;
+        totalComplianceChecks += project.files_count ? project.files_count + 10 : 10; // Base value
+      });
+      
+      const avgROI = projectCount > 0 ? totalROI / projectCount : 0;
+      const complianceRate = totalComplianceChecks > 0 ? Math.min(100, (complianceCount / totalComplianceChecks) * 100) : 0;
+      
+      setProMetrics({
+        budgetProfit: totalProfit,
+        budgetROI: Math.round(avgROI),
+        projectCount,
+        complianceRate: Math.round(complianceRate)
+      });
+    }
+  }, [projects]);
 
   // Handle project selection with results loading
   const handleProjectSelect = async (projectId: string) => {
@@ -217,11 +251,10 @@ const ProFeatures: React.FC = () => {
         
         const response = await apiService.generateAdvancedLetter(letterData);
         setLetterResponse(response);
-        
-        if (response.status === 'success') {
-          message.success('Письмо успешно сгенерировано');
-        } else {
-          message.error(response.message || 'Ошибка генерации письма');
+        {
+          const { ok, error } = (response?.status ? { ok: response.status === 'success', error: response.error || response.message } : { ok: true, error: null });
+          if (ok) message.success('Письмо успешно сгенерировано');
+          else message.error(String(error || 'Ошибка генерации письма'));
         }
       } else {
         // This is a regular letter generation
@@ -236,11 +269,10 @@ const ProFeatures: React.FC = () => {
         
         const response = await apiService.generateLetter(letterData);
         setLetterResponse(response);
-        
-        if (response.status === 'success') {
-          message.success('Письмо успешно сгенерировано');
-        } else {
-          message.error(response.message || 'Ошибка генерации письма');
+        {
+          const { ok, error } = (response?.status ? { ok: response.status === 'success', error: response.error || response.message } : { ok: true, error: null });
+          if (ok) message.success('Письмо успешно сгенерировано');
+          else message.error(String(error || 'Ошибка генерации письма'));
         }
       }
     } catch (error: any) {
@@ -265,17 +297,18 @@ const ProFeatures: React.FC = () => {
       
       const response = await apiService.autoBudget(budgetData);
       setBudgetResponse(response);
-      
-      if (response.status === 'success') {
-        // Prepare chart data
-        const chartData = (response.budget?.sections || []).map((section: any) => ({
-          name: section.position_code,
-          cost: section.total_cost
-        }));
-        setBudgetChartData(chartData);
-        message.success('Смета успешно рассчитана');
-      } else {
-        message.error(response.error || 'Ошибка расчета сметы');
+      {
+        const ok = response?.status ? response.status === 'success' : true;
+        if (ok) {
+          const chartData = (response.budget?.sections || []).map((section: any) => ({
+            name: section.position_code,
+            cost: section.total_cost
+          }));
+          setBudgetChartData(chartData);
+          message.success('Смета успешно рассчитана');
+        } else {
+          message.error(response.error || 'Ошибка расчета сметы');
+        }
       }
     } catch (error: any) {
       console.error('Error calculating budget:', error);
@@ -299,11 +332,10 @@ const ProFeatures: React.FC = () => {
       
       const response = await apiService.generatePPR(pprData);
       setPprResponse(response);
-      
-      if (response.status === 'success') {
-        message.success('ППР успешно сгенерирован');
-      } else {
-        message.error(response.error || 'Ошибка генерации ППР');
+      {
+        const ok = response?.status ? response.status === 'success' : true;
+        if (ok) message.success('ППР успешно сгенерирован');
+        else message.error(response.error || 'Ошибка генерации ППР');
       }
     } catch (error: any) {
       console.error('Error generating PPR:', error);
@@ -339,11 +371,10 @@ const ProFeatures: React.FC = () => {
 
       const response = await apiService.analyzeTender(requestData);
       setTenderResponse(response);
-      
-      if (response.status === 'success') {
-        message.success('Анализ тендера выполнен успешно');
-      } else {
-        message.error(response.error || 'Ошибка анализа тендера');
+      {
+        const ok = response?.status ? response.status === 'success' : true;
+        if (ok) message.success('Анализ тендера выполнен успешно');
+        else message.error(response.error || 'Ошибка анализа тендера');
       }
     } catch (error: any) {
       console.error('Error analyzing tender:', error);

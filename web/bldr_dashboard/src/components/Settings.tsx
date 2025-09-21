@@ -19,6 +19,7 @@ import {
 import { useStore } from '../store';
 import { apiService } from '../services/api';
 import UnifiedToolsSettings from './UnifiedToolsSettings';
+import UserManagement from './UserManagement';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
@@ -28,7 +29,7 @@ const { Panel } = Collapse;
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [testResult, setTestResult] = useState('');
-  const { settings, setSettings, theme, setTheme } = useStore();
+  const { settings, setSettings, theme, setTheme, user } = useStore();
   const [resetLoading, setResetLoading] = useState(false);
   
   useEffect(() => {
@@ -430,6 +431,15 @@ const Settings: React.FC = () => {
           </Form.Item>
         </Form>
       </TabPane>
+      
+      {user?.role === 'admin' && (
+        <TabPane tab="Пользователи" key="users">
+          <Card title="Управление пользователями" style={{ marginBottom: 24 }}>
+            <Text type="secondary">Добавляйте пользователей с ролями. Для операций требуется токен администратора.</Text>
+          </Card>
+          <UserManagement />
+        </TabPane>
+      )}
       
       <TabPane tab="🔧 Unified Tools" key="unified-tools">
         <UnifiedToolsSettings />

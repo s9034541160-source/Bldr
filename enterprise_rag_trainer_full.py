@@ -40,6 +40,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional, Union
 import re
+import pickle
 
 # Импорты для обработки файлов с проверкой
 def check_and_install_dependencies():
@@ -169,7 +170,7 @@ class WorkSequence:
     doc_type: str = ""
     section: str = ""
 
-@dataclass 
+@dataclass
 class DocumentChunk:
     """Чанк документа"""
     content: str
@@ -177,6 +178,261 @@ class DocumentChunk:
     section_id: str = ""
     chunk_type: str = "paragraph"
     embedding: Optional[List[float]] = None
+
+class EnhancedPerformanceMonitor:
+    """УЛУЧШЕНИЕ 10: Мониторинг качества и производительности"""
+    
+    def __init__(self):
+        self.stats = {
+            'documents_processed': 0,
+            'total_processing_time': 0.0,
+            'quality_scores': [],
+            'errors': [],
+            'stage_timings': {},
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'gpu_utilization': [],
+            'memory_usage': []
+        }
+        self.start_time = time.time()
+        
+    def log_document(self, processing_time: float, quality_score: float, stages_timing: Dict[str, float]):
+        """Log document processing metrics"""
+        self.stats['documents_processed'] += 1
+        self.stats['total_processing_time'] += processing_time
+        self.stats['quality_scores'].append(quality_score)
+        
+        for stage, timing in stages_timing.items():
+            if stage not in self.stats['stage_timings']:
+                self.stats['stage_timings'][stage] = []
+            self.stats['stage_timings'][stage].append(timing)
+    
+    def log_error(self, error: str, file_path: str):
+        """Log processing error"""
+        self.stats['errors'].append({
+            'error': str(error),
+            'file': file_path,
+            'timestamp': time.time()
+        })
+    
+    def log_cache_hit(self):
+        self.stats['cache_hits'] += 1
+        
+    def log_cache_miss(self):
+        self.stats['cache_misses'] += 1
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive performance metrics"""
+        total_time = time.time() - self.start_time
+        avg_quality = sum(self.stats['quality_scores']) / max(len(self.stats['quality_scores']), 1)
+        avg_processing_time = self.stats['total_processing_time'] / max(self.stats['documents_processed'], 1)
+        
+        return {
+            'total_runtime': total_time,
+            'documents_processed': self.stats['documents_processed'],
+            'avg_processing_time_per_doc': avg_processing_time,
+            'documents_per_minute': self.stats['documents_processed'] / (total_time / 60) if total_time > 0 else 0,
+            'average_quality_score': avg_quality,
+            'quality_distribution': {
+                'excellent': len([q for q in self.stats['quality_scores'] if q >= 0.9]),
+                'good': len([q for q in self.stats['quality_scores'] if 0.8 <= q < 0.9]),
+                'fair': len([q for q in self.stats['quality_scores'] if 0.7 <= q < 0.8]),
+                'poor': len([q for q in self.stats['quality_scores'] if q < 0.7])
+            },
+            'cache_efficiency': {
+                'hits': self.stats['cache_hits'],
+                'misses': self.stats['cache_misses'],
+                'hit_rate': self.stats['cache_hits'] / max(self.stats['cache_hits'] + self.stats['cache_misses'], 1)
+            },
+            'error_rate': len(self.stats['errors']) / max(self.stats['documents_processed'], 1),
+            'stage_performance': {
+                stage: {
+                    'avg_time': sum(timings) / len(timings),
+                    'min_time': min(timings),
+                    'max_time': max(timings)
+                } for stage, timings in self.stats['stage_timings'].items() if timings
+            }
+        }
+
+class EmbeddingCache:
+    """УЛУЧШЕНИЕ 8: Кэширование эмбеддингов"""
+    
+    def __init__(self, cache_dir: str = "embedding_cache", max_size_mb: int = 1000):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self.max_size_mb = max_size_mb
+        self.cache_index = self._load_cache_index()
+        
+    def _load_cache_index(self) -> Dict[str, Dict]:
+        """Load cache index from disk"""
+        index_file = self.cache_dir / "cache_index.json"
+        if index_file.exists():
+            try:
+                with open(index_file, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def _save_cache_index(self):
+        """Save cache index to disk"""
+        index_file = self.cache_dir / "cache_index.json"
+        with open(index_file, 'w') as f:
+            json.dump(self.cache_index, f)
+    
+    def _get_cache_key(self, content: str, model_name: str) -> str:
+        """Generate cache key from content and model"""
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        return f"{model_name}_{content_hash[:16]}"
+    
+    def get(self, content: str, model_name: str) -> Optional[List[float]]:
+        """Get cached embedding"""
+        cache_key = self._get_cache_key(content, model_name)
+        
+        if cache_key in self.cache_index:
+            cache_file = self.cache_dir / f"{cache_key}.pkl"
+            if cache_file.exists():
+                try:
+                    with open(cache_file, 'rb') as f:
+                        embedding = pickle.load(f)
+                    # Update access time
+                    self.cache_index[cache_key]['last_access'] = time.time()
+                    return embedding
+                except:
+                    # Remove corrupted cache entry
+                    self._remove_cache_entry(cache_key)
+        
+        return None
+    
+    def set(self, content: str, model_name: str, embedding: List[float]):
+        """Store embedding in cache"""
+        cache_key = self._get_cache_key(content, model_name)
+        cache_file = self.cache_dir / f"{cache_key}.pkl"
+        
+        try:
+            # Save embedding to disk
+            with open(cache_file, 'wb') as f:
+                pickle.dump(embedding, f)
+            
+            # Update cache index
+            self.cache_index[cache_key] = {
+                'file': str(cache_file),
+                'size_bytes': cache_file.stat().st_size,
+                'created': time.time(),
+                'last_access': time.time(),
+                'model': model_name
+            }
+            
+            # Clean up if cache is too large
+            self._cleanup_if_needed()
+            self._save_cache_index()
+            
+        except Exception as e:
+            logger.warning(f"Failed to cache embedding: {e}")
+    
+    def _remove_cache_entry(self, cache_key: str):
+        """Remove cache entry from disk and index"""
+        if cache_key in self.cache_index:
+            cache_file = Path(self.cache_index[cache_key]['file'])
+            if cache_file.exists():
+                cache_file.unlink()
+            del self.cache_index[cache_key]
+    
+    def _cleanup_if_needed(self):
+        """Clean up old cache entries if cache is too large"""
+        total_size_mb = sum(entry['size_bytes'] for entry in self.cache_index.values()) / (1024 * 1024)
+        
+        if total_size_mb > self.max_size_mb:
+            # Sort by last access time (oldest first)
+            sorted_entries = sorted(
+                self.cache_index.items(),
+                key=lambda x: x[1]['last_access']
+            )
+            
+            # Remove oldest 20% of entries
+            remove_count = len(sorted_entries) // 5
+            for cache_key, _ in sorted_entries[:remove_count]:
+                self._remove_cache_entry(cache_key)
+            
+            logger.info(f"Cache cleanup: removed {remove_count} old entries")
+
+class SmartQueue:
+    """УЛУЧШЕНИЕ 7: Умная очередь с приоритизацией"""
+    
+    def __init__(self):
+        self.priority_rules = {
+            'norms': 10,      # Highest priority - normative documents
+            'ppr': 8,         # High priority - project documents  
+            'smeta': 6,       # Medium priority - estimates
+            'rd': 5,          # Medium priority - working docs
+            'educational': 3,  # Lower priority - educational
+            'other': 1        # Lowest priority
+        }
+        
+        self.size_bonus = {
+            'large': 2,   # >1MB files get bonus (likely important)
+            'medium': 1,  # 100KB-1MB files
+            'small': 0    # <100KB files
+        }
+    
+    def calculate_priority(self, file_path: str, doc_type: str = None, file_size: int = 0) -> int:
+        """Calculate processing priority for a file"""
+        priority = 0
+        
+        # Base priority from document type
+        priority += self.priority_rules.get(doc_type, 1)
+        
+        # Size bonus
+        if file_size > 1024 * 1024:  # >1MB
+            priority += self.size_bonus['large']
+        elif file_size > 100 * 1024:  # >100KB
+            priority += self.size_bonus['medium']
+        
+        # Special filename patterns
+        filename = Path(file_path).name.lower()
+        if any(keyword in filename for keyword in ['важн', 'срочн', 'приор', 'important', 'urgent']):
+            priority += 5
+        
+        if any(keyword in filename for keyword in ['гост', 'снип', 'сп', 'норм']):
+            priority += 3
+            
+        if any(keyword in filename for keyword in ['тест', 'test', 'temp', 'draft']):
+            priority -= 2
+        
+        return max(priority, 1)  # Minimum priority 1
+    
+    def sort_files(self, file_list: List[str]) -> List[Tuple[str, int]]:
+        """Sort files by processing priority"""
+        files_with_priority = []
+        
+        for file_path in file_list:
+            try:
+                file_size = Path(file_path).stat().st_size
+                # Quick doc type detection from filename
+                doc_type = self._quick_doc_type_detection(file_path)
+                priority = self.calculate_priority(file_path, doc_type, file_size)
+                files_with_priority.append((file_path, priority))
+            except:
+                files_with_priority.append((file_path, 1))  # Default priority
+        
+        # Sort by priority (highest first)
+        files_with_priority.sort(key=lambda x: x[1], reverse=True)
+        return files_with_priority
+    
+    def _quick_doc_type_detection(self, file_path: str) -> str:
+        """Quick document type detection from filename"""
+        filename = Path(file_path).name.lower()
+        
+        if any(pattern in filename for pattern in ['сп', 'снип', 'гост']):
+            return 'norms'
+        elif any(pattern in filename for pattern in ['смет', 'расц', 'гэсн']):
+            return 'smeta'
+        elif any(pattern in filename for pattern in ['ппр', 'проект']):
+            return 'ppr'
+        elif any(pattern in filename for pattern in ['рд', 'рабоч']):
+            return 'rd'
+        else:
+            return 'other'
 
 class SimpleHierarchicalChunker:
     """Встроенная реализация иерархического чанкера"""
@@ -304,18 +560,19 @@ class EnterpriseRAGTrainer:
     """
     
     def __init__(self, base_dir: str = None):
-        """Инициализация тренера"""
+        """Инициализация улучшенного тренера с всеми 10 улучшениями"""
         
-        logger.info("=== INITIALIZING ENTERPRISE RAG TRAINER ===")
+        logger.info("=== INITIALIZING ENHANCED ENTERPRISE RAG TRAINER ===")
         
         # Базовые пути
         self.base_dir = Path(base_dir) if base_dir else Path(os.getenv("BASE_DIR", "I:/docs/downloaded"))
         self.reports_dir = self.base_dir / "reports"
         self.cache_dir = self.base_dir / "cache"
+        self.embedding_cache_dir = self.base_dir / "embedding_cache"
         self.processed_files_json = self.base_dir / "processed_files.json"
         
         # Создаем папки
-        for dir_path in [self.reports_dir, self.cache_dir]:
+        for dir_path in [self.reports_dir, self.cache_dir, self.embedding_cache_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
         
         # Статистика
@@ -328,7 +585,13 @@ class EnterpriseRAGTrainer:
             'start_time': time.time()
         }
         
-        # Инициализация компонентов
+        # Инициализация улучшенных компонентов
+        logger.info("Initializing enhanced components...")
+        self.performance_monitor = EnhancedPerformanceMonitor()
+        self.embedding_cache = EmbeddingCache(cache_dir=str(self.embedding_cache_dir), max_size_mb=1000)
+        self.smart_queue = SmartQueue()
+        
+        # Инициализация основных компонентов
         self._init_sbert_model()
         self._init_databases()
         self._load_processed_files()
@@ -337,7 +600,8 @@ class EnterpriseRAGTrainer:
         logger.info(f"Base directory: {self.base_dir}")
         logger.info(f"SBERT model loaded: {hasattr(self, 'sbert_model')}")
         logger.info(f"Databases connected: Qdrant={hasattr(self, 'qdrant')}, Neo4j={hasattr(self, 'neo4j')}")
-        logger.info("=== INITIALIZATION COMPLETE ===")
+        logger.info(f"Enhanced components loaded: PerformanceMonitor, EmbeddingCache, SmartQueue")
+        logger.info("=== ENHANCED INITIALIZATION COMPLETE ===")
     
     def _init_sbert_model(self):
         """Инициализация SBERT модели без спама"""
@@ -499,13 +763,20 @@ class EnterpriseRAGTrainer:
             raise
     
     def _process_single_file(self, file_path: str) -> bool:
-        """Обработка одного файла через весь пайплайн"""
+        """Обработка одного файла через весь пайплайн с мониторингом"""
+        
+        file_start_time = time.time()
+        stages_timing = {}
         
         try:
             # ===== STAGE 1: Initial Validation =====
+            stage1_start = time.time()
             validation_result = self._stage1_initial_validation(file_path)
+            stages_timing['validation'] = time.time() - stage1_start
+            
             if not validation_result['file_exists'] or not validation_result['can_read']:
                 logger.warning(f"[Stage 1/14] File validation failed: {file_path}")
+                self.performance_monitor.log_error("File validation failed", file_path)
                 return False
             
             # ===== STAGE 2: Duplicate Checking =====
@@ -569,16 +840,24 @@ class EnterpriseRAGTrainer:
             self.stats['total_chunks'] += len(chunks)
             self.stats['total_works'] += len(work_sequences)
             
+            # Рассчитываем общее время обработки и качество
+            total_processing_time = time.time() - file_start_time
+            quality_score = quality_report['quality_score'] / 100.0  # Нормализуем к 0-1
+            
+            # Записываем в performance monitor
+            self.performance_monitor.log_document(total_processing_time, quality_score, stages_timing)
+            
             # Сохраняем в processed_files
             self._update_processed_files(file_path, duplicate_result['file_hash'], {
                 'chunks_count': len(chunks),
                 'works_count': len(work_sequences),
                 'doc_type': doc_type_info['doc_type'],
                 'quality_score': quality_report['quality_score'],
-                'processed_at': datetime.now().isoformat()
+                'processed_at': datetime.now().isoformat(),
+                'processing_time': total_processing_time
             })
             
-            logger.info(f"[COMPLETE] File processed: {len(chunks)} chunks, {len(work_sequences)} works")
+            logger.info(f"[COMPLETE] File processed: {len(chunks)} chunks, {len(work_sequences)} works, quality: {quality_score:.2f}, time: {total_processing_time:.2f}s")
             return True
             
         except Exception as e:
@@ -614,8 +893,8 @@ class EnterpriseRAGTrainer:
             valid_files = valid_files[:max_files]
             logger.info(f"Limited to {max_files} files")
         
-        # NTD Preprocessing
-        prioritized_files = self._ntd_preprocessing(valid_files)
+        # Enhanced NTD Preprocessing with Smart Queue prioritization
+        prioritized_files = self._enhanced_ntd_preprocessing_with_smart_queue(valid_files)
         
         elapsed = time.time() - start_time
         logger.info(f"[Stage 0/14] COMPLETE - Found {len(prioritized_files)} files in {elapsed:.2f}s")
@@ -669,6 +948,47 @@ class EnterpriseRAGTrainer:
         logger.info(f"NTD Preprocessing: Prioritized {len(prioritized)} files")
         
         return [file_path for file_path, _ in prioritized]
+    
+    def _enhanced_ntd_preprocessing_with_smart_queue(self, files: List[str]) -> List[str]:
+        """УЛУЧШЕНИЕ 7: Enhanced NTD Preprocessing with SmartQueue prioritization"""
+        
+        logger.info("Starting Enhanced NTD Preprocessing with Smart Queue...")
+        start_time = time.time()
+        
+        # Используем SmartQueue для приоритизации
+        prioritized_files = self.smart_queue.sort_files(files)
+        
+        # Логируем топ-10 файлов по приоритету
+        logger.info("Top 10 priority files:")
+        for i, (file_path, priority) in enumerate(prioritized_files[:10]):
+            filename = Path(file_path).name
+            logger.info(f"  {i+1}. [{priority:2d}] {filename}")
+        
+        # Дополнительная фильтрация для NTD файлов
+        ntd_enhanced_files = []
+        for file_path, priority in prioritized_files:
+            filename = Path(file_path).name.lower()
+            
+            # Бонус для нормативных документов
+            if any(pattern in filename for pattern in ['гост', 'снип', 'сп', 'нтд']):
+                priority += 5
+                logger.debug(f"NTD bonus applied: {filename} -> priority {priority}")
+            
+            # Штраф для тестовых и временных файлов
+            if any(pattern in filename for pattern in ['тест', 'test', 'temp', 'copy']):
+                priority -= 3
+                logger.debug(f"Test penalty applied: {filename} -> priority {priority}")
+            
+            ntd_enhanced_files.append((file_path, priority))
+        
+        # Пересортируем с учетом NTD бонусов
+        ntd_enhanced_files.sort(key=lambda x: x[1], reverse=True)
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Enhanced NTD Preprocessing complete: {len(ntd_enhanced_files)} files prioritized in {elapsed:.2f}s")
+        
+        # Возвращаем только пути файлов (без приоритетов)
+        return [file_path for file_path, _ in ntd_enhanced_files]
     
     def _get_file_priority(self, file_path: str, priorities: Dict[str, int]) -> int:
         """Определение приоритета файла по имени"""
@@ -3475,9 +3795,15 @@ class EnterpriseRAGTrainer:
                 'base_directory': str(self.base_dir),
                 'processed_files_count': len(self.processed_files)
             },
-            'performance_metrics': {
+            'performance_metrics': self.performance_monitor.get_metrics() if hasattr(self, 'performance_monitor') else {
                 'avg_processing_time_per_file': total_time / max(self.stats['files_found'], 1),
                 'files_per_minute': (self.stats['files_processed'] / (total_time / 60)) if total_time > 60 else 0
+            },
+            'enhanced_features': {
+                'smart_queue_used': hasattr(self, 'smart_queue'),
+                'embedding_cache_enabled': hasattr(self, 'embedding_cache'),
+                'performance_monitoring': hasattr(self, 'performance_monitor'),
+                'cache_hit_rate': getattr(self.performance_monitor, 'stats', {}).get('cache_hits', 0) / max(getattr(self.performance_monitor, 'stats', {}).get('cache_hits', 0) + getattr(self.performance_monitor, 'stats', {}).get('cache_misses', 0), 1) if hasattr(self, 'performance_monitor') else 0
             }
         }
         

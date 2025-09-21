@@ -3,14 +3,16 @@ import { Card, Button, message, Row, Col, Divider, Input, Modal } from 'antd';
 import { apiService } from '../services/api';
 import QuickToolsWidget from './QuickToolsWidget';
 import ToolsSystemStats from './ToolsSystemStats';
+import StatusPanel from './StatusPanel';
+import ToolsCatalogWidget from './ToolsCatalogWidget';
 
 const ControlPanel: React.FC = () => {
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [modalContent, setModalContent] = useState<{ title: string; content: any } | null>(null);
   const [trainDir, setTrainDir] = useState('');
   const [queryText, setQueryText] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
 
   const showModal = (title: string, content: any) => {
     setModalContent({ title, content });
@@ -198,10 +200,12 @@ const ControlPanel: React.FC = () => {
           </Button>
         </Card>
       </Card>
+
+      <ToolsCatalogWidget />
       
       <Modal
         title={modalContent?.title || 'Результат'}
-        visible={isModalVisible}
+        open={isModalVisible}
         onOk={handleOk}
         onCancel={handleCancel}
         width={800}

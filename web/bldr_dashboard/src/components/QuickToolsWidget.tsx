@@ -24,7 +24,7 @@ import {
   ToolOutlined,
   StarFilled
 } from '@ant-design/icons';
-import { apiService } from '../services/api';
+import { apiService, unwrap } from '../services/api';
 
 interface QuickTool {
   name: string;
@@ -132,10 +132,11 @@ const QuickToolsWidget: React.FC<QuickToolsWidgetProps> = ({
         onToolExecute(toolName);
       }
 
-      if (result.status === 'success') {
+      const { ok, error } = unwrap<any>(result);
+      if (ok) {
         message.success(`${toolName} executed successfully`);
       } else {
-        message.error(`${toolName} failed: ${result.error}`);
+        message.error(`${toolName} failed: ${String(error)}`);
       }
     } catch (error) {
       console.error(`Error executing ${toolName}:`, error);

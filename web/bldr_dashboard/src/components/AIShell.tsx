@@ -53,7 +53,7 @@ const AIShell: React.FC = () => {
     const token = localStorage.getItem('auth-token');
     
     if (token) {
-      const websocket = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
+      const websocket = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
 
       websocket.onopen = () => {
         setWsStatus('Connected');
@@ -120,13 +120,45 @@ const AIShell: React.FC = () => {
     try {
       // For coordinator role, use the multi-agent system
       if (selectedRole === 'coordinator') {
-        const response = await apiService.submitQuery(input);
-        const aiResponse = { 
-          type: 'ai' as const, 
-          content: `План выполнения: ${JSON.stringify(response.plan, null, 2)}\n\nРезультаты: ${JSON.stringify(response.results, null, 2)}` 
-        };
-        addChatMessage(aiResponse); // Add to store
-        setLoading(false);
+        // Async flow: enqueue and wait via WS/polling
+        const resp = await apiService.submitQueryAsync(input);
+        const taskId = resp?.task_id;
+        if (taskId) {
+          const processingMessage = { type: 'system' as const, content: `Запрос поставлен в очередь (Task ID: ${taskId}). Идёт обработка...` };
+          addChatMessage(processingMessage);
+          // Poll as fallback in case WS isn’t available
+          const start = Date.now();
+          const poll = async () => {
+            try {
+              const r = await apiService.getAsyncResult(taskId);
+              if (r?.status === 'completed' && r?.result) {
+                const final = r.result;
+                const text = final.final_response || JSON.stringify(final, null, 2);
+                addChatMessage({ type: 'ai', content: text });
+                setLoading(false);
+                return true;
+              }
+              if (r?.status === 'error') {
+                addChatMessage({ type: 'error', content: r?.error || 'Ошибка выполнения задачи' });
+                setLoading(false);
+                return true;
+              }
+              if (Date.now() - start > 15 * 60 * 1000) { // 15 min timeout
+                addChatMessage({ type: 'error', content: 'Таймаут ожидания результата' });
+                setLoading(false);
+                return true;
+              }
+            } catch (e) {}
+            return false;
+          };
+          const interval = setInterval(async () => {
+            const done = await poll();
+            if (done) clearInterval(interval);
+          }, 3000);
+        } else {
+          addChatMessage({ type: 'error', content: 'Не удалось поставить задачу в очередь' });
+          setLoading(false);
+        }
       } else {
         // For other roles, use the direct AI endpoint with proper role context
         const selectedRoleInfo = roleOptions.find(role => role.value === selectedRole);
@@ -176,10 +208,8 @@ const AIShell: React.FC = () => {
 
   const handleFileUpload = async (file: File) => {
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const response = await apiService.uploadFile(formData);
+      // Pass the file directly to the API service method
+      const response = await apiService.uploadFile(file);
       
       // Add file info to history
       const fileMessage = { 

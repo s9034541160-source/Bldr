@@ -92,6 +92,23 @@ const ToolResultDisplay: React.FC<ToolResultDisplayProps> = ({
   const renderData = (data: any) => {
     if (!data) return null;
 
+    // Special handling for TTS results with audio
+    if (result.tool_name === 'text_to_speech' && data.audio_path) {
+      return (
+        <div>
+          <audio controls style={{ width: '100%' }}>
+            <source src={data.audio_path} type="audio/mpeg" />
+            Your browser does not support the audio element.
+          </audio>
+          <div style={{ marginTop: 8 }}>
+            <a href={data.audio_path} download>
+              Скачать аудио файл
+            </a>
+          </div>
+        </div>
+      );
+    }
+
     if (typeof data === 'string') {
       return <Paragraph copyable>{data}</Paragraph>;
     }
@@ -228,7 +245,6 @@ const ToolResultDisplay: React.FC<ToolResultDisplayProps> = ({
                   message={result.metadata.suggestions}
                   type="info"
                   showIcon
-                  size="small"
                 />
               </Descriptions.Item>
             )}

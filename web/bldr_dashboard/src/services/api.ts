@@ -5,7 +5,7 @@ import { useStore } from '../store';
 
 // Базовая конфигурация axios
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api', // Используем прокси или переменную окружения
+  baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '/api', // Используем прокси или переменную окружения
   timeout: 3600000, // Increased timeout to 3600 seconds (1 hour) for coordinator requests
   headers: {
     'Content-Type': 'application/json',
@@ -600,6 +600,28 @@ export const apiService = {
     }
   },
 
+  // User management (admin)
+  listUsers: async () => {
+    try {
+      const response = await api.get('/auth/users');
+      // unified ok/err support
+      const data = response.data?.data || response.data;
+      return data?.users || [];
+    } catch (error) {
+      console.error('Ошибка получения пользователей:', error);
+      throw error;
+    }
+  },
+  createUser: async (username: string, password: string, role: string = 'user') => {
+    try {
+      const response = await api.post('/auth/users', { username, password, role });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка создания пользователя:', error);
+      throw error;
+    }
+  },
+
   // Выполнение Cypher запроса к Neo4j
   executeCypher: async (data: CypherRequest) => {
     try {
@@ -644,7 +666,7 @@ export const apiService = {
   // Project Management API methods
   getProjects: async () => {
     try {
-      const response = await api.get<Project[]>('/projects');
+      const response = await api.get<Project[]>('/api/projects');
       return response.data || [];
     } catch (error) {
       console.error('Ошибка получения проектов:', error);
@@ -654,7 +676,7 @@ export const apiService = {
 
   getProject: async (id: string) => {
     try {
-      const response = await api.get<Project>(`/projects/${id}`);
+      const response = await api.get<Project>(`/api/projects/${id}`);
       return response.data;
     } catch (error) {
       console.error('Ошибка получения проекта:', error);
@@ -664,7 +686,8 @@ export const apiService = {
 
   createProject: async (data: ProjectCreate) => {
     try {
-      const response = await api.post<Project>('/projects', data);
+      // Backend expects POST /projects/ (with trailing slash) to avoid 307 redirect
+      const response = await api.post<Project>('/api/projects/', data);
       return response.data;
     } catch (error) {
       console.error('Ошибка создания проекта:', error);
@@ -674,7 +697,7 @@ export const apiService = {
 
   updateProject: async (id: string, data: ProjectUpdate) => {
     try {
-      const response = await api.put<Project>(`/projects/${id}`, data);
+      const response = await api.put<Project>(`/api/projects/${id}`, data);
       return response.data;
     } catch (error) {
       console.error('Ошибка обновления проекта:', error);
@@ -684,7 +707,7 @@ export const apiService = {
 
   deleteProject: async (id: string) => {
     try {
-      const response = await api.delete(`/projects/${id}`);
+      const response = await api.delete(`/api/projects/${id}`);
       return response.data;
     } catch (error) {
       console.error('Ошибка удаления проекта:', error);
@@ -699,7 +722,7 @@ export const apiService = {
         formData.append('files', file);
       });
       
-      const response = await api.post(`/projects/${projectId}/files`, formData, {
+      const response = await api.post(`/api/projects/${projectId}/files`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -713,7 +736,7 @@ export const apiService = {
 
   getProjectFiles: async (projectId: string) => {
     try {
-      const response = await api.get<ProjectFile[]>(`/projects/${projectId}/files`);
+      const response = await api.get<ProjectFile[]>(`/api/projects/${projectId}/files`);
       return response.data || [];
     } catch (error) {
       console.error('Ошибка получения файлов проекта:', error);
@@ -723,7 +746,7 @@ export const apiService = {
 
   getProjectResults: async (projectId: string) => {
     try {
-      const response = await api.get<ProjectResult[]>(`/projects/${projectId}/results`);
+      const response = await api.get<ProjectResult[]>(`/api/projects/${projectId}/results`);
       return response.data || [];
     } catch (error) {
       console.error('Ошибка получения результатов проекта:', error);
@@ -734,7 +757,7 @@ export const apiService = {
   // Add method to save project result
   saveProjectResult: async (projectId: string, type: string, data: any) => {
     try {
-      const response = await api.post(`/projects/${projectId}/results`, { type, data });
+      const response = await api.post(`/api/projects/${projectId}/results`, { type, data });
       return response.data;
     } catch (error) {
       console.error('Ошибка сохранения результата проекта:', error);
@@ -744,7 +767,7 @@ export const apiService = {
 
   scanProjectFiles: async (projectId: string) => {
     try {
-      const response = await api.get<ScanResult>(`/projects/${projectId}/scan`);
+      const response = await api.get<ScanResult>(`/api/projects/${projectId}/scan`);
       return response.data;
     } catch (error) {
       console.error('Ошибка сканирования файлов проекта:', error);
@@ -754,7 +777,7 @@ export const apiService = {
 
   deleteProjectFile: async (projectId: string, fileId: string) => {
     try {
-      const response = await api.delete(`/projects/${projectId}/files/${fileId}`);
+      const response = await api.delete(`/api/projects/${projectId}/files/${fileId}`);
       return response.data;
     } catch (error) {
       console.error('Ошибка удаления файла из проекта:', error);
@@ -767,7 +790,7 @@ export const apiService = {
       const formData = new FormData();
       formData.append('directory_path', directoryPath);
       
-      const response = await api.post(`/projects/${projectId}/scan-directory`, formData);
+      const response = await api.post(`/api/projects/${projectId}/scan-directory`, formData);
       return response.data;
     } catch (error) {
       console.error('Ошибка сканирования директории для проекта:', error);
@@ -831,11 +854,13 @@ export const apiService = {
   },
 
   // File upload method
-  uploadFile: async (data: FormData) => {
+  uploadFile: async (file: File) => {
     try {
+      const formData = new FormData();
+      formData.append('file', file);
       // Note: We don't set Content-Type header explicitly for FormData
       // The browser will automatically set it with the correct boundary
-      const response = await api.post('/upload-file', data);
+      const response = await api.post('/upload-file', formData);
       return response.data || { status: 'error', message: 'Пустой ответ от сервера' };
     } catch (error) {
       console.error('Ошибка загрузки файла:', error);
@@ -1036,7 +1061,7 @@ export const apiService = {
   getTemplates: async (category?: string) => {
     try {
       const params = category ? { category } : {};
-      const response = await api.get<Template[]>('/templates', { params });
+      const response = await api.get<Template[]>('/api/projects/templates', { params });
       return response.data || [];
     } catch (error) {
       console.error('Ошибка получения шаблонов:', error);
@@ -1046,7 +1071,7 @@ export const apiService = {
 
   createTemplate: async (data: TemplateCreate) => {
     try {
-      const response = await api.post<Template>('/templates', data);
+      const response = await api.post<Template>('/api/projects/templates', data);
       return response.data || null;
     } catch (error) {
       console.error('Ошибка создания шаблона:', error);
@@ -1056,7 +1081,7 @@ export const apiService = {
 
   updateTemplate: async (templateId: string, data: TemplateUpdate) => {
     try {
-      const response = await api.put<Template>(`/templates/${templateId}`, data);
+      const response = await api.put<Template>(`/api/projects/templates/${templateId}`, data);
       return response.data || null;
     } catch (error) {
       console.error('Ошибка обновления шаблона:', error);
@@ -1066,7 +1091,7 @@ export const apiService = {
 
   deleteTemplate: async (templateId: string) => {
     try {
-      const response = await api.delete(`/templates/${templateId}`);
+      const response = await api.delete(`/api/projects/templates/${templateId}`);
       return response.data || null;
     } catch (error) {
       console.error('Ошибка удаления шаблона:', error);
@@ -1083,16 +1108,19 @@ export const apiService = {
       formData.append('password', password);
       formData.append('grant_type', 'password');
       
-      // Create a separate axios instance for token requests without auth headers
-      const tokenApi = axios.create({
-        baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-        timeout: api.defaults.timeout,
+      // Use the main api instance but override baseURL for token requests
+      // This ensures the request goes through the proxy correctly
+      const response = await api.post<{access_token: string, token_type: string}>('/token', formData, {
+        baseURL: '', // Override to use root path for proxy
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
+        // Remove auth header for token requests
+        transformRequest: [(data, headers) => {
+          delete headers?.Authorization;
+          return data;
+        }]
       });
-      
-      const response = await tokenApi.post<{access_token: string, token_type: string}>('/token', formData);
       return response.data.access_token;
     } catch (error) {
       console.error('Ошибка получения токена:', error);
@@ -1111,6 +1139,9 @@ export const apiService = {
     }
   },
 
+  // Text-to-Speech Tools
+  textToSpeech: (data: any) => 
+    apiService.executeUnifiedTool('text_to_speech', data),
 
 
   // Submit query to multi-agent system
@@ -1120,12 +1151,38 @@ export const apiService = {
         query,
         source: 'frontend',
         user_id: 'web_user',
-        project_id: null,
-        chat_id: null
+        project_id: 'web'
       });
       return response.data;
     } catch (error) {
       console.error('Ошибка отправки запроса в multi-agent систему:', error);
+      throw error;
+    }
+  },
+
+  // Submit query to multi-agent system asynchronously
+  submitQueryAsync: async (query: string) => {
+    try {
+      const response = await api.post('/submit_query_async', { 
+        query,
+        source: 'frontend',
+        user_id: 'web_user',
+        project_id: 'web'
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка отправки асинхронного запроса в multi-agent систему:', error);
+      throw error;
+    }
+  },
+
+  // Get async query result
+  getAsyncResult: async (taskId: string) => {
+    try {
+      const response = await api.get(`/submit_query_result?task_id=${taskId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения результата асинхронного запроса:', error);
       throw error;
     }
   },
