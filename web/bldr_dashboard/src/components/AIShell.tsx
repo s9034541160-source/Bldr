@@ -49,61 +49,91 @@ const AIShell: React.FC = () => {
 
   // WebSocket connection
   useEffect(() => {
-    // Get token from localStorage with correct key
-    const token = localStorage.getItem('auth-token');
+    let websocket: WebSocket | null = null;
     
-    if (token) {
-      const websocket = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
-
-      websocket.onopen = () => {
-        setWsStatus('Connected');
-        console.log('WebSocket connected');
-      };
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.stage && data.log) {
-            // This is a training progress update or AI task update
-            if (data.status === 'completed') {
-              const aiResponse = { type: 'ai' as const, content: data.data || data.log };
-              addChatMessage(aiResponse);
-              setLoading(false);
-            } else if (data.status === 'error' || data.status === 'timeout') {
-              const errorMessage = { type: 'error' as const, content: data.data || data.log };
-              addChatMessage(errorMessage);
-              setLoading(false);
-            } else {
-              // Processing update
-              const processingMessage = { type: 'system' as const, content: data.log };
-              addChatMessage(processingMessage);
+    const initWebSocket = async () => {
+      // Get token from localStorage with correct key
+      let token = localStorage.getItem('auth-token');
+      
+      const ensureToken = async () => {
+        if (!token) {
+          try {
+            const form = new URLSearchParams();
+            form.append('username', 'admin');
+            form.append('password', 'admin');
+            form.append('grant_type', 'password');
+            const baseUrl = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+            const resp = await fetch(`${baseUrl}/token`, { method: 'POST', body: form, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data?.access_token) {
+                token = data.access_token;
+                localStorage.setItem('auth-token', token || '');
+              }
             }
-          } else {
-            // This is a chat message
-            const aiResponse = { type: 'ai' as const, content: data.message || data };
-            addChatMessage(aiResponse);
-          }
-        } catch (e) {
-          console.error('Error parsing WebSocket message:', e);
+          } catch {}
         }
+        return token;
       };
+      
+      token = await ensureToken();
+      if (token) {
+        const apiBase = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+        const wsBase = apiBase.replace('http', 'ws');
+        websocket = new WebSocket(`${wsBase}/ws?token=${token}`);
 
-      websocket.onclose = () => {
-        setWsStatus('Disconnected');
-        console.log('WebSocket disconnected');
-      };
+        websocket.onopen = () => {
+          setWsStatus('Connected');
+          console.log('WebSocket connected');
+        };
 
-      websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setWsStatus('Error');
-      };
+        websocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.stage && data.log) {
+              // This is a training progress update or AI task update
+              if (data.status === 'completed') {
+                const aiResponse = { type: 'ai' as const, content: data.data || data.log };
+                addChatMessage(aiResponse);
+                setLoading(false);
+              } else if (data.status === 'error' || data.status === 'timeout') {
+                const errorMessage = { type: 'error' as const, content: data.data || data.log };
+                addChatMessage(errorMessage);
+                setLoading(false);
+              } else {
+                // Processing update
+                const processingMessage = { type: 'system' as const, content: data.log };
+                addChatMessage(processingMessage);
+              }
+            } else {
+              // This is a chat message
+              const aiResponse = { type: 'ai' as const, content: data.message || data };
+              addChatMessage(aiResponse);
+            }
+          } catch (e) {
+            console.error('Error parsing WebSocket message:', e);
+          }
+        };
 
-      setWs(websocket);
-    }
+        websocket.onclose = () => {
+          setWsStatus('Disconnected');
+          console.log('WebSocket disconnected');
+        };
+
+        websocket.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setWsStatus('Error');
+        };
+
+        setWs(websocket);
+      }
+    };
+    
+    initWebSocket();
 
     return () => {
-      if (ws) {
-        ws.close();
+      if (websocket) {
+        websocket.close();
       }
     };
   }, []);
@@ -118,45 +148,78 @@ const AIShell: React.FC = () => {
     setInput('');
 
     try {
-      // For coordinator role, use the multi-agent system
+      // For coordinator role, call real backend like Telegram bot
       if (selectedRole === 'coordinator') {
-        // Async flow: enqueue and wait via WS/polling
-        const resp = await apiService.submitQueryAsync(input);
-        const taskId = resp?.task_id;
-        if (taskId) {
-          const processingMessage = { type: 'system' as const, content: `Запрос поставлен в очередь (Task ID: ${taskId}). Идёт обработка...` };
-          addChatMessage(processingMessage);
-          // Poll as fallback in case WS isn’t available
-          const start = Date.now();
-          const poll = async () => {
+        const ensureToken = async () => {
+          let token = localStorage.getItem('auth-token');
+          if (!token) {
             try {
-              const r = await apiService.getAsyncResult(taskId);
-              if (r?.status === 'completed' && r?.result) {
-                const final = r.result;
-                const text = final.final_response || JSON.stringify(final, null, 2);
-                addChatMessage({ type: 'ai', content: text });
-                setLoading(false);
-                return true;
+              const form = new URLSearchParams();
+              form.append('username', 'admin');
+              form.append('password', 'admin');
+              form.append('grant_type', 'password');
+              const baseUrl = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+              const resp = await fetch(`${baseUrl}/token`, { method: 'POST', body: form, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+              if (resp.ok) {
+                const data = await resp.json();
+                token = (data?.access_token as string) || '';
+                if (token) localStorage.setItem('auth-token', token);
               }
-              if (r?.status === 'error') {
-                addChatMessage({ type: 'error', content: r?.error || 'Ошибка выполнения задачи' });
-                setLoading(false);
-                return true;
-              }
-              if (Date.now() - start > 15 * 60 * 1000) { // 15 min timeout
-                addChatMessage({ type: 'error', content: 'Таймаут ожидания результата' });
-                setLoading(false);
-                return true;
-              }
-            } catch (e) {}
-            return false;
-          };
-          const interval = setInterval(async () => {
-            const done = await poll();
-            if (done) clearInterval(interval);
-          }, 3000);
+            } catch {}
+          }
+          return token;
+        };
+
+        const token = await ensureToken();
+        if (!token) {
+          addChatMessage({ type: 'error', content: 'Не удалось авторизоваться' });
+          setLoading(false);
+          return;
+        }
+
+        const payload = {
+          message: input,
+          context_search: true,
+          max_context: 3,
+          agent_role: 'coordinator',
+          request_context: { channel: 'frontend', role: 'coordinator' }
+        };
+
+        const resp = await fetch('/api/ai/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          const responseText = (typeof data === 'string') ? data : (data.response || data.final_response || JSON.stringify(data));
+          addChatMessage({ type: 'ai', content: responseText });
+          setLoading(false);
+        } else if (resp.status === 401) {
+          // retry once with fresh token
+          localStorage.removeItem('auth-token');
+          const newToken = await ensureToken();
+          if (!newToken) {
+            addChatMessage({ type: 'error', content: 'Авторизация не удалась (401)' });
+            setLoading(false);
+            return;
+          }
+          const retry = await fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${newToken}` },
+            body: JSON.stringify(payload)
+          });
+          const retryData = await retry.json().catch(() => ({}));
+          const responseText = (typeof retryData === 'string') ? retryData : (retryData.response || retryData.final_response || JSON.stringify(retryData));
+          addChatMessage({ type: 'ai', content: responseText });
+          setLoading(false);
         } else {
-          addChatMessage({ type: 'error', content: 'Не удалось поставить задачу в очередь' });
+          const txt = await resp.text();
+          addChatMessage({ type: 'error', content: `Ошибка API: ${txt || resp.status}` });
           setLoading(false);
         }
       } else {

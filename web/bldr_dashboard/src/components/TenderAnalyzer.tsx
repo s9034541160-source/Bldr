@@ -41,7 +41,7 @@ import {
   DownloadOutlined,
   DollarCircleOutlined,
   CheckCircleOutlined,
-  ExclamationTriangleOutlined,
+  ExclamationCircleOutlined,
   TrophyOutlined,
   AlertOutlined,
   CalendarOutlined,

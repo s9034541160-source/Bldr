@@ -20,6 +20,7 @@ celery_app.conf.update(
     result_serializer='json',
     timezone='Europe/Moscow',
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
     beat_schedule={
         'daily-norms-update': {
             'task': 'core.celery_norms.update_norms_task',

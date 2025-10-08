@@ -8,7 +8,21 @@
 
 ## 📋 Полный список ролей и их моделей
 
-### 1. **Координатор (coordinator)** - Центральный интеллект системы
+### 1. **Классификатор документов (doc_classifier)** - Специалист по JSON классификации
+```python
+"doc_classifier": {
+    "name": "DeepSeek-Coder-6.7B - JSON Classifier",
+    "model": "deepseek-coder-6.7b-instruct.Q5_K_M.gguf",
+    "temperature": 0.0,
+    "responsibilities": [
+        "Strictly outputting JSON for document classification",
+        "Following formatting rules",
+        "Fast document type detection"
+    ]
+}
+```
+
+### 2. **Координатор (coordinator)** - Центральный интеллект системы
 ```python
 "coordinator": {
     "name": "DeepSeek-R1-0528-Qwen3-8B - Главный координатор проекта",

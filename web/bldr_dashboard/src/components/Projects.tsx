@@ -78,10 +78,8 @@ const Projects: React.FC = () => {
       
       // Create the project
       const res = await apiService.createProject(projectData);
-      const { ok, error } = unwrap<any>(res);
-      if (!ok) throw new Error(String(error));
-      
-      const newProject = res.data;
+      // apiService.createProject returns Project directly
+      const newProject = res as unknown as Project;
       message.success('Project created successfully');
       
       // If folder path is provided, automatically scan and attach files

@@ -50,22 +50,28 @@ const Queue: React.FC = () => {
   } = useQuery<QueueTask[], any>({
     queryKey: ['queue', 'active'],
     queryFn: async () => {
-      const byTool = await apiService.getActiveJobs();
-      const list: QueueTask[] = [] as any;
-      Object.entries(byTool).forEach(([toolType, items]: [string, any]) => {
-        (items as any[]).forEach((it: any) => {
-          list.push({
-            id: it.job_id || it.id,
-            type: toolType,
-            status: it.status,
-            progress: it.progress ?? 0,
-            owner: it.owner || 'system',
-            started_at: it.created_at,
-            eta: it.eta || null,
-          } as QueueTask);
+      try {
+        const byTool = await apiService.getActiveJobs();
+        const list: QueueTask[] = [] as any;
+        Object.entries(byTool).forEach(([toolType, items]: [string, any]) => {
+          (items as any[]).forEach((it: any) => {
+            list.push({
+              id: it.job_id || it.id,
+              type: toolType,
+              status: it.status,
+              progress: it.progress ?? 0,
+              owner: it.owner || 'system',
+              started_at: it.created_at,
+              eta: it.eta || null,
+            } as QueueTask);
+          });
         });
-      });
-      return list;
+        return list;
+      } catch (error) {
+        // !!! ЧЕСТНАЯ ОШИБКА: НЕ ПОКАЗЫВАЕМ ФЕЙКОВЫЕ ДАННЫЕ !!!
+        console.error('Ошибка загрузки активных задач:', error);
+        throw error;
+      }
     },
     refetchInterval: connected ? false : 10000,
     retry: (failureCount: number, error: any) => {
@@ -307,15 +313,21 @@ const Queue: React.FC = () => {
     return (
       <div>
         <Alert 
-          message="Очередь задач" 
-          description="Компонент для отслеживания активных и завершенных задач"
-          type="info"
+          message="Очередь задач недоступна" 
+          description="Не удалось загрузить очередь задач. Возможные причины: Redis недоступен, проблемы с подключением к базе данных или серверу."
+          type="error"
           icon={<InfoCircleOutlined />}
           style={{ marginBottom: '16px' }}
+          action={
+            <Button size="small" onClick={() => window.location.reload()}>
+              Обновить страницу
+            </Button>
+          }
         />
         <Alert 
-          message={`Ошибка: ${error.message}`} 
+          message={`Техническая ошибка: ${error.message}`} 
           type="error"
+          description="Проверьте подключение к Redis и перезапустите сервер если необходимо."
         />
       </div>
     );

@@ -305,6 +305,7 @@ class UnifiedEstimateParser:
 unified_parser = UnifiedEstimateParser()
 
 # Unified API functions
+
 def parse_estimate_unified(input_data: Union[str, List[str], Dict[str, Any]], **kwargs) -> Dict[str, Any]:
     """
     Unified estimate parsing function - replaces all individual parsers
@@ -319,21 +320,26 @@ def parse_estimate_unified(input_data: Union[str, List[str], Dict[str, Any]], **
     return unified_parser.parse_estimate_unified(input_data, **kwargs)
 
 # Backward compatibility functions (delegate to unified parser)
+
 def parse_gesn_estimate_unified(estimate_file: str, region: str = 'ekaterinburg') -> Dict[str, Any]:
     """Backward compatible GESN parser"""
     return parse_estimate_unified(estimate_file, region=region, format_hint='gesn')
+
 
 def parse_excel_estimate_unified(file_path: str) -> Dict[str, Any]:
     """Backward compatible Excel parser"""
     return parse_estimate_unified(file_path, format_hint='excel')
 
+
 def parse_csv_estimate_unified(file_path: str) -> Dict[str, Any]:
     """Backward compatible CSV parser"""
     return parse_estimate_unified(file_path, format_hint='csv')
 
+
 def parse_text_estimate_unified(content: str) -> Dict[str, Any]:
     """Backward compatible text parser"""
     return parse_estimate_unified(content)
+
 
 def parse_batch_estimates_unified(file_list: List[str], region: str = 'ekaterinburg') -> Dict[str, Any]:
     """Backward compatible batch parser"""

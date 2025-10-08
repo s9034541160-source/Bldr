@@ -1,0 +1,33 @@
+# namespace:financial
+from typing import Any, Dict
+
+manifest = {
+    'name': 'auto_budget',
+    'version': '0.1.0',
+    'title': 'Авто-бюджет',
+    'description': 'Расчет бюджета проекта по входным данным',
+    'category': 'financial',
+    'ui_placement': 'tools',
+    'enabled': True,
+    'system': False,
+    'entrypoint': 'tools.custom.auto_budget:execute',
+    'params': [
+        { 'name': 'project_name', 'type': 'string', 'required': True },
+        { 'name': 'base_cost', 'type': 'number', 'required': True },
+        { 'name': 'profit', 'type': 'number', 'required': False, 'default': 0.1 },
+        { 'name': 'overheads', 'type': 'number', 'required': False, 'default': 0.15 }
+    ],
+    'outputs': ['budget', 'total_cost']
+}
+
+def execute(**kwargs) -> Dict[str, Any]:
+    try:
+        from core.unified_tools_system import execute_tool as unified_exec
+        res = unified_exec('auto_budget', **kwargs)
+        if getattr(res, 'status', None) == 'success':
+            return { 'status': 'success', 'data': res.data }
+        return { 'status': 'error', 'error': getattr(res, 'error', 'unknown error') }
+    except Exception as e:
+        return { 'status': 'error', 'error': str(e) }
+
+

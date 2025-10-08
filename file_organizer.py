@@ -33,6 +33,76 @@ class DocumentFileOrganizer:
                 }
             },
             
+            # Финансы и бухгалтерия
+            'finance': {
+                'folder': 'finance',
+                'subfolders': {
+                    'accounting': 'finance/accounting',
+                    'budgeting': 'finance/budgeting',
+                    'reports': 'finance/reports',
+                    'tax': 'finance/tax',
+                    'general': 'finance/general'
+                }
+            },
+            
+            # HR / Кадры
+            'hr': {
+                'folder': 'hr',
+                'subfolders': {
+                    'policies': 'hr/policies',
+                    'contracts': 'hr/contracts',
+                    'onboarding': 'hr/onboarding',
+                    'training': 'hr/training',
+                    'general': 'hr/general'
+                }
+            },
+            
+            # Промышленная/пожарная безопасность, ОТ/ТБ
+            'safety': {
+                'folder': 'safety',
+                'subfolders': {
+                    'industrial': 'safety/industrial',
+                    'fire': 'safety/fire',
+                    'labor': 'safety/labor',
+                    'tb': 'safety/tech_safety',
+                    'general': 'safety/general'
+                }
+            },
+            
+            # Экология
+            'ecology': {
+                'folder': 'ecology',
+                'subfolders': {
+                    'standards': 'ecology/standards',
+                    'reports': 'ecology/reports',
+                    'permits': 'ecology/permits',
+                    'general': 'ecology/general'
+                }
+            },
+            
+            # Образование (книги, лекции, методички)
+            'education': {
+                'folder': 'education',
+                'subfolders': {
+                    'books': 'education/books',
+                    'lectures': 'education/lectures',
+                    'guidelines': 'education/guidelines',
+                    'tutorials': 'education/tutorials',
+                    'general': 'education/general'
+                }
+            },
+            
+            # Исполнительная документация / инструкции / регламенты
+            'operations': {
+                'folder': 'operations',
+                'subfolders': {
+                    'exec_docs': 'operations/exec_docs',
+                    'instructions': 'operations/instructions',
+                    'regulations': 'operations/regulations',
+                    'general': 'operations/general'
+                }
+            },
+            
             # Сметы и расчеты
             'estimates': {
                 'folder': 'estimates',
@@ -231,14 +301,25 @@ class DocumentFileOrganizer:
         doc_type = doc_type_info.get('doc_type', 'other')
         doc_subtype = doc_type_info.get('doc_subtype', 'general')
         filename = source_path.name.lower()
+        confidence = float(doc_type_info.get('confidence', 0.0) or 0.0)
+        
+        # Универсальная детекция домена по имени файла (и при низкой уверенности типа)
+        domain = self._detect_domain_from_filename(filename)
+        if domain and (doc_type == 'other' or confidence < 0.6):
+            # Если уверенность низкая или тип 'other', используем доменную маршрутизацию
+            sub = domain.get('sub', 'general')
+            dom_key = domain['key']
+            if dom_key in self.folder_structure:
+                subfolders = self.folder_structure[dom_key]['subfolders']
+                return self.base_dir / subfolders.get(sub, list(subfolders.values())[0])
         
         # Специальная логика для нормативных документов
         if doc_type == 'norms':
-            if 'гост' in filename or 'gost' in filename:
+            if 'гост' in filename or 'gost' in filename or 'gost r' in filename or 'iso' in filename:
                 return self.base_dir / self.folder_structure['norms']['subfolders']['gost']
             elif 'снип' in filename or 'snip' in filename:
                 return self.base_dir / self.folder_structure['norms']['subfolders']['snip']
-            elif any(sp_marker in filename for sp_marker in ['сп ', 'sp ', 'свод правил']):
+            elif any(sp_marker in filename for sp_marker in ['сп ', ' sp', 'свод правил', 'svod pravil']):
                 return self.base_dir / self.folder_structure['norms']['subfolders']['sp']
             else:
                 return self.base_dir / self.folder_structure['norms']['subfolders']['general']
@@ -280,6 +361,66 @@ class DocumentFileOrganizer:
         
         # По умолчанию - в папку "other/unknown"
         return self.base_dir / self.folder_structure['other']['subfolders']['unknown']
+
+    def _detect_domain_from_filename(self, filename: str) -> Dict[str, str]:
+        """Эвристическая детекция домена по имени файла"""
+        # Финансы/бухгалтерия
+        if any(k in filename for k in ['смет', 'budget', 'смета', 'кбк', 'кассов', 'бюджет', 'баланс', 'отчетность', 'финан', 'план-факт', 'налог', 'ндс', 'income', 'expense']):
+            if any(k in filename for k in ['налог', 'tax', 'ндс']):
+                return {'key': 'finance', 'sub': 'tax'}
+            if any(k in filename for k in ['бюджет', 'budget', 'план-факт']):
+                return {'key': 'finance', 'sub': 'budgeting'}
+            if any(k in filename for k in ['баланс', 'отчет', 'report']):
+                return {'key': 'finance', 'sub': 'reports'}
+            return {'key': 'finance', 'sub': 'general'}
+        
+        # HR / кадры
+        if any(k in filename for k in ['трудов', 'штатн', 'должностн', 'hr', 'кадров', 'прием', 'увольн', 'формирование персонала', 'отпуск']):
+            if any(k in filename for k in ['должностн', 'policy', 'политик']):
+                return {'key': 'hr', 'sub': 'policies'}
+            if any(k in filename for k in ['инструктаж', 'обучение', 'training']):
+                return {'key': 'hr', 'sub': 'training'}
+            return {'key': 'hr', 'sub': 'general'}
+        
+        # Безопасность (пром/пож/охрана труда/ТБ)
+        if any(k in filename for k in ['пожар', 'охрана труда', 'тб', 'техника безопасности', 'промбез', 'охр. труда', 'pb', 'пб']):
+            if any(k in filename for k in ['пожар', 'fire']):
+                return {'key': 'safety', 'sub': 'fire'}
+            if any(k in filename for k in ['охрана труда', 'тб', 'техника безопасности']):
+                return {'key': 'safety', 'sub': 'labor'}
+            return {'key': 'safety', 'sub': 'industrial'}
+        
+        # Экология
+        if any(k in filename for k in ['эколог', 'ecolog', 'природоохр', 'эмиссии', 'отходы', 'eia']):
+            if any(k in filename for k in ['отчет', 'report']):
+                return {'key': 'ecology', 'sub': 'reports'}
+            if any(k in filename for k in ['разрешен', 'permit']):
+                return {'key': 'ecology', 'sub': 'permits'}
+            return {'key': 'ecology', 'sub': 'standards'}
+        
+        # Образование (книги/лекции/методички)
+        if any(k in filename for k in ['книга', 'book', 'лекци', 'lecture', 'методическ', 'guideline', 'учебн', 'пособие', 'tutorial']):
+            if any(k in filename for k in ['лекци', 'lecture']):
+                return {'key': 'education', 'sub': 'lectures'}
+            if any(k in filename for k in ['методическ', 'guideline']):
+                return {'key': 'education', 'sub': 'guidelines'}
+            if any(k in filename for k in ['tutorial', 'пособие']):
+                return {'key': 'education', 'sub': 'tutorials'}
+            return {'key': 'education', 'sub': 'books'}
+        
+        # Операционные документы (исполнительная, инструкции, регламенты)
+        if any(k in filename for k in ['исполнительн', 'регламент', 'инструкц', 'procedure', 'sop']):
+            if any(k in filename for k in ['исполнительн', 'exec']):
+                return {'key': 'operations', 'sub': 'exec_docs'}
+            if any(k in filename for k in ['регламент', 'regulation']):
+                return {'key': 'operations', 'sub': 'regulations'}
+            return {'key': 'operations', 'sub': 'instructions'}
+        
+        # Сметы (если не распознано как общий finance)
+        if any(k in filename for k in ['гэсн', 'gesn', 'фер', 'fer', 'тер', 'ter']):
+            return {'key': 'estimates', 'sub': 'gesn' if 'гэсн' in filename or 'gesn' in filename else ('fer' if 'фер' in filename or 'fer' in filename else 'ter')}
+        
+        return {}
 
     def _get_unique_target_path(self, source_path: Path, target_folder: Path) -> Path:
         """Получение уникального пути для файла в целевой папке"""

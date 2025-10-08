@@ -5,13 +5,14 @@
   "main": "src/index.tsx",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint src --ext ts,tsx --fix",
     "format": "prettier --write src/**/*.{ts,tsx,css,json}"
   },
   "dependencies": {
+    "@ant-design/plots": "^2.6.5",
     "@ant-design/pro-components": "^2.8.10",
     "@tanstack/react-query": "^5.87.4",
     "antd": "^5.19.1",

@@ -5,7 +5,7 @@ import { useStore } from '../store';
 
 // Базовая конфигурация axios
 const api = axios.create({
-  baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '/api', // Используем прокси или переменную окружения
+  baseURL: 'http://localhost:8000/api', // HARDCODE: Force connection to backend port 8000
   timeout: 3600000, // Increased timeout to 3600 seconds (1 hour) for coordinator requests
   headers: {
     'Content-Type': 'application/json',
@@ -496,12 +496,52 @@ export interface ImproveLetterData {
 }
 
 // API методы
+
+export interface CoordinatorSettings {
+  planning_enabled: boolean;
+  max_iterations: number;
+  simple_plan_fast_path: boolean;
+  artifact_default_enabled: boolean;
+  complexity_auto_expand: boolean;
+  complexity_thresholds: { tools_count: number; time_est_minutes: number };
+}
+
+export interface PromptInfo {
+  role: string;
+  title: string;
+  source: 'active' | 'default' | string;
+  updated_at?: string | null;
+}
+
+export interface PromptResponse {
+  role: string;
+  title: string;
+  content: string;
+  source: 'active' | 'default' | string;
+  updated_at?: string | null;
+}
+
+export interface RulesResponse {
+  content: string;
+  source: 'active' | 'default' | string;
+  updated_at?: string | null;
+}
+
+export interface RoleInfo { role: string; title: string; }
+export interface AvailableModel { id: string; label: string; base_url: string; temperature?: number; max_tokens?: number; }
+
 export const apiService = {
   // Запрос к RAG системе
   query: async (data: QueryRequest) => {
     try {
       const response = await api.post<{results: QueryResult[], ndcg: number}>('/query', data);
-      return response.data || { results: [], ndcg: 0 };
+      
+      // 🚨 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Проверяем HTTP статус
+      if (response.status !== 200) {
+        throw new Error(`Ошибка API (HTTP ${response.status}): ${response.data?.error_message || 'Неизвестная ошибка'}`);
+      }
+      
+      return response.data; // Возвращаем только чистые данные при успехе
     } catch (error) {
       console.error('Ошибка выполнения запроса:', error);
       throw error;
@@ -533,23 +573,6 @@ export const apiService = {
     }
   },
 
-  // Получение метрик
-  getMetrics: async () => {
-    try {
-      // Use the JSON metrics endpoint instead of the Prometheus text format
-      const response = await api.get<MetricsData>('/metrics-json');
-      return response.data || {
-        total_chunks: 0,
-        avg_ndcg: 0,
-        coverage: 0,
-        conf: 0,
-        viol: 0
-      };
-    } catch (error) {
-      console.error('Ошибка загрузки метрик:', error);
-      throw error;
-    }
-  },
 
   // Вызов AI с определенной ролью
   callAI: async (data: AIRequest) => {
@@ -562,6 +585,77 @@ export const apiService = {
     }
   },
 
+  // ===== NEW RAG API METHODS =====
+  
+  // Анализ одного файла
+  analyzeFile: async (filePath: string, saveToDb: boolean = false) => {
+    try {
+      const response = await api.post('/api/analyze-file', {
+        file_path: filePath,
+        save_to_db: saveToDb
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка анализа файла:', error);
+      throw error;
+    }
+  },
+
+  // Анализ проекта (несколько файлов)
+  analyzeProject: async (filePaths: string[]) => {
+    try {
+      const response = await api.post('/api/analyze-project', {
+        file_paths: filePaths
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка анализа проекта:', error);
+      throw error;
+    }
+  },
+
+  // Дообучение на файле
+  trainFile: async (filePath: string) => {
+    try {
+      const response = await api.post('/api/train-file', {
+        file_path: filePath
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка дообучения на файле:', error);
+      throw error;
+    }
+  },
+
+  // Получение информации о файле
+  getFileInfo: async (filePath: string) => {
+    try {
+      const response = await api.get('/api/get-file-info', {
+        params: { file_path: filePath }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения информации о файле:', error);
+      throw error;
+    }
+  },
+
+  // Получение списка файлов
+  listFiles: async (directory?: string, extension: string = '.pdf') => {
+    try {
+      const response = await api.get('/api/list-files', {
+        params: { 
+          directory: directory,
+          extension: extension
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения списка файлов:', error);
+      throw error;
+    }
+  },
+
   // Проверка состояния системы
   getHealth: async () => {
     try {
@@ -569,6 +663,177 @@ export const apiService = {
       return response.data || { status: 'unknown', timestamp: '', components: {} };
     } catch (error) {
       console.error('Ошибка проверки состояния:', error);
+      throw error;
+    }
+  },
+
+  // ===== SETTINGS: Coordinator =====
+  getCoordinatorSettings: async (): Promise<CoordinatorSettings> => {
+    try {
+      const response = await api.get('/api/settings/coordinator');
+      // Backend returns object directly
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения настроек координатора:', error);
+      throw error;
+    }
+  },
+  updateCoordinatorSettings: async (settings: CoordinatorSettings) => {
+    try {
+      const response = await api.put('/api/settings/coordinator', settings);
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка сохранения настроек координатора:', error);
+      throw error;
+    }
+  },
+
+  // ===== SETTINGS: Role ↔ Model Assignment =====
+  listRoles: async (): Promise<RoleInfo[]> => {
+    try {
+      const response = await api.get('/api/settings/roles');
+      return response.data?.roles || [];
+    } catch (error) {
+      console.error('Ошибка получения списка ролей:', error);
+      throw error;
+    }
+  },
+  listAvailableModels: async (): Promise<{ models: AvailableModel[]; default_base_url: string }> => {
+    try {
+      const response = await api.get('/api/settings/models/available');
+      return response.data || { models: [], default_base_url: '' };
+    } catch (error) {
+      console.error('Ошибка получения моделей:', error);
+      throw error;
+    }
+  },
+  getRoleModels: async () => {
+    try {
+      const response = await api.get('/api/settings/role-models');
+      return response.data || { roles: {} };
+    } catch (error) {
+      console.error('Ошибка получения назначений ролей:', error);
+      throw error;
+    }
+  },
+  updateRoleModels: async (mapping: Record<string, any>) => {
+    try {
+      const response = await api.put('/api/settings/role-models', mapping);
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка обновления назначений ролей:', error);
+      throw error;
+    }
+  },
+  resetRoleModel: async (role?: string) => {
+    try {
+      const params = role ? `?role=${encodeURIComponent(role)}` : '';
+      const response = await api.post(`/api/settings/role-models/reset${params}`, {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка сброса назначений ролей:', error);
+      throw error;
+    }
+  },
+  // ===== SETTINGS: Raw JSON =====
+  getFullSettingsJson: async () => {
+    try {
+      const response = await api.get('/api/settings/json');
+      return response.data || {};
+    } catch (error) {
+      console.error('Ошибка получения settings.json:', error);
+      throw error;
+    }
+  },
+  downloadFullSettingsJson: async () => {
+    try {
+      const response = await api.get('/api/settings/json/download', { responseType: 'blob' });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка скачивания settings.json:', error);
+      throw error;
+    }
+  },
+  openSettingsInEditor: async () => {
+    try {
+      const response = await api.post('/api/settings/json/open', {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка открытия settings.json:', error);
+      throw error;
+    }
+  },
+  clearModelCache: async (keepCoordinator: boolean = true) => {
+    try {
+      const response = await api.post(`/api/settings/models/clear-cache?keep_coordinator=${keepCoordinator ? 'true' : 'false'}`, {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка очистки кеша моделей:', error);
+      throw error;
+    }
+  },
+
+  // ===== SETTINGS: Prompts & Factual Rules =====
+  listPrompts: async (): Promise<PromptInfo[]> => {
+    try {
+      const response = await api.get('/api/settings/prompts/list');
+      return response.data || [];
+    } catch (error) {
+      console.error('Ошибка получения списка промптов:', error);
+      throw error;
+    }
+  },
+  getPrompt: async (roleKey: string): Promise<PromptResponse> => {
+    try {
+      const response = await api.get(`/api/settings/prompts/${roleKey}`);
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения промпта роли:', error);
+      throw error;
+    }
+  },
+  updatePrompt: async (roleKey: string, content: string): Promise<PromptResponse> => {
+    try {
+      const response = await api.put(`/api/settings/prompts/${roleKey}`, { content });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка обновления промпта роли:', error);
+      throw error;
+    }
+  },
+  resetPrompt: async (roleKey: string): Promise<PromptResponse> => {
+    try {
+      const response = await api.post(`/api/settings/prompts/${roleKey}/reset`, {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка сброса промпта роли:', error);
+      throw error;
+    }
+  },
+  getFactualRules: async (): Promise<RulesResponse> => {
+    try {
+      const response = await api.get('/api/settings/factual-rules');
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка получения правил фактической точности:', error);
+      throw error;
+    }
+  },
+  updateFactualRules: async (content: string): Promise<RulesResponse> => {
+    try {
+      const response = await api.put('/api/settings/factual-rules', { content });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка обновления правил фактической точности:', error);
+      throw error;
+    }
+  },
+  resetFactualRules: async (): Promise<RulesResponse> => {
+    try {
+      const response = await api.post('/api/settings/factual-rules/reset', {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка сброса правил фактической точности:', error);
       throw error;
     }
   },
@@ -928,33 +1193,7 @@ export const apiService = {
     }
   },
 
-  // Norms Management API methods
-  getNormsList: async (params: {
-    category?: string;
-    status?: string;
-    type?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-  }) => {
-    try {
-      const response = await api.get<NormsListResponse>('/norms-list', { params });
-      return response.data || { data: [], pagination: { page: 1, limit: 50, total: 0, pages: 0 } };
-    } catch (error) {
-      console.error('Ошибка получения списка норм:', error);
-      throw error;
-    }
-  },
 
-  getNormsSummary: async () => {
-    try {
-      const response = await api.get<NormsSummaryResponse>('/norms-summary');
-      return response.data || { total: 0, actual: 0, outdated: 0, pending: 0 };
-    } catch (error) {
-      console.error('Ошибка получения сводки норм:', error);
-      throw error;
-    }
-  },
 
   updateNorms: async (data: { categories?: string[]; force?: boolean }) => {
     try {
@@ -1006,56 +1245,6 @@ export const apiService = {
     }
   },
 
-  // Queue methods (Redis-backed tools jobs)
-  getActiveJobs: async () => {
-    try {
-      const response = await api.get('/api/tools/jobs/active');
-      return response.data?.jobs || {};
-    } catch (error) {
-      console.error('Ошибка получения активных задач:', error);
-      throw error;
-    }
-  },
-  getCompletedJobs: async () => {
-    try {
-      const response = await api.get('/api/tools/jobs/completed');
-      return response.data?.jobs || {};
-    } catch (error: any) {
-      // Endpoint might not exist; fallback to empty
-      if (error?.response?.status === 404) {
-        return {};
-      }
-      console.error('Ошибка получения завершенных задач:', error);
-      return {};
-    }
-  },
-  getJobStatus: async (jobId: string) => {
-    try {
-      const response = await api.get(`/api/tools/jobs/${jobId}/status`);
-      return response.data;
-    } catch (error) {
-      console.error('Ошибка статуса задачи:', error);
-      throw error;
-    }
-  },
-  cancelJob: async (jobId: string) => {
-    try {
-      const response = await api.post(`/api/tools/jobs/${jobId}/cancel`);
-      return response.data;
-    } catch (error) {
-      console.error('Ошибка отмены задачи:', error);
-      throw error;
-    }
-  },
-  downloadJobResult: async (jobId: string) => {
-    try {
-      const response = await api.get(`/api/tools/jobs/${jobId}/download`, { responseType: 'blob' });
-      return response.data;
-    } catch (error) {
-      console.error('Ошибка скачивания результата задачи:', error);
-      throw error;
-    }
-  },
 
   // Template management methods
   getTemplates: async (category?: string) => {
@@ -1211,6 +1400,12 @@ export const apiService = {
         execution_time: response.data.execution_time,
         tool_name: toolName,
         timestamp: response.data.timestamp || new Date().toISOString(),
+        // !!! ИСПРАВЛЕНИЕ: Передаем result_type и result_table для ToolResultDisplay !!!
+        result_type: response.data.result_type,
+        result_title: response.data.result_title,
+        result_content: response.data.result_content,
+        result_table: response.data.result_table,
+        result_chart_config: response.data.result_chart_config,
         ...response.data
       };
     } catch (error: any) {
@@ -1263,10 +1458,54 @@ export const apiService = {
     }
   },
 
+  // ===== TOOLS REGISTRY (modular plugins) =====
+  listRegistryTools: async () => {
+    const response = await api.get('/api/tools/registry/list');
+    return response.data?.tools || [];
+  },
+  getRegistryToolInfo: async (name: string) => {
+    const response = await api.get(`/api/tools/registry/info?name=${encodeURIComponent(name)}`);
+    return response.data?.tool;
+  },
+  updateRegistryManifest: async (name: string, patch: any) => {
+    const response = await api.post(`/api/tools/registry/update-manifest?name=${encodeURIComponent(name)}`, patch);
+    return response.data;
+  },
+  enableRegistryTool: async (name: string) => {
+    const response = await api.post(`/api/tools/registry/enable?name=${encodeURIComponent(name)}`);
+    return response.data;
+  },
+  disableRegistryTool: async (name: string) => {
+    const response = await api.post(`/api/tools/registry/disable?name=${encodeURIComponent(name)}`);
+    return response.data;
+  },
+  reloadRegistry: async (name?: string) => {
+    const url = name ? `/api/tools/registry/reload?name=${encodeURIComponent(name)}` : '/api/tools/registry/reload';
+    const response = await api.post(url, {});
+    return response.data;
+  },
+  registerRegistryTool: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/api/tools/registry/register', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    return response.data;
+  },
+  createRegistryTemplate: async (name: string, namespace: string = 'custom') => {
+    const response = await api.post(`/api/tools/registry/create-template?name=${encodeURIComponent(name)}&namespace=${encodeURIComponent(namespace)}`);
+    return response.data;
+  },
+  executeRegistryTool: async (name: string, params: Record<string, any>) => {
+    const response = await api.post(`/api/tools/registry/execute?name=${encodeURIComponent(name)}`, params || {});
+    return response.data;
+  },
+
   // Get tool information with enhanced details
   getToolInfo: async (toolName: string) => {
     try {
-      const response = await api.get(`/tools/${toolName}/info`);
+      console.log(`[API] Fetching tool info for: ${toolName}`); // DEBUG
+      // Add cache-busting parameter to force fresh data
+      const response = await api.get(`/tools/${toolName}/info?_t=${Date.now()}`);
+      console.log(`[API] Tool info response:`, response.data); // DEBUG
       return {
         status: 'success',
         data: response.data,
@@ -1302,6 +1541,49 @@ export const apiService = {
   // Get professional tools (tools tab)
   getProfessionalTools: async () => {
     return apiService.getToolsByPlacement('tools');
+  },
+  reloadCoordinator: async () => {
+    try {
+      const response = await api.post('/api/settings/models/reload-coordinator', {});
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка перезагрузки координатора:', error);
+      throw error;
+    }
+  },
+
+  // ===== PROMPTS: Preview =====
+  previewPrompt: async (role: string) => {
+    try {
+      const response = await api.get(`/api/settings/prompts/preview?role=${encodeURIComponent(role)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка предпросмотра промпта:', error);
+      throw error;
+    }
+  },
+
+  // ===== SETTINGS: Autotest =====
+  runAutoTest: async (variants: Array<{ name: string; coordinator?: any; models_overrides?: any }>, queries?: string[], files?: { image?: string; audio?: string; document?: string }) => {
+    try {
+      const response = await api.post('/api/settings/autotest/run', { variants, queries, files });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка автотестирования:', error);
+      throw error;
+    }
+  },
+  uploadAutotestFile: async (file: File, kind?: 'image' | 'audio' | 'document') => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (kind) formData.append('kind', kind);
+      const response = await api.post('/api/settings/autotest/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки файла для автотеста:', error);
+      throw error;
+    }
   },
 
   // ===== UPDATED TOOL METHODS (using unified API) =====
@@ -1352,6 +1634,100 @@ export const apiService = {
     
   monteCarloSimulation: (projectData: any) => 
     apiService.executeUnifiedTool('monte_carlo_sim', { project_data: projectData }),
+
+  // ===== RAG SYSTEM API METHODS =====
+  
+  // Получить метрики RAG системы
+  getMetrics: async () => {
+    try {
+      const response = await api.get('/rag/metrics');
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки метрик RAG:', error);
+      throw error;
+    }
+  },
+
+  // Получить сводку по нормам
+  getNormsSummary: async () => {
+    try {
+      const response = await api.get('/rag/norms/summary');
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки сводки по нормам:', error);
+      throw error;
+    }
+  },
+
+  // Получить список документов с пагинацией
+  getNormsList: async (params: { page?: number; limit?: number } = {}) => {
+    try {
+      const response = await api.get('/rag/norms/list', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки списка документов:', error);
+      throw error;
+    }
+  },
+
+  // ===== QUEUE MANAGEMENT API METHODS =====
+  
+  // Получить активные задачи
+  getActiveJobs: async () => {
+    try {
+      const response = await api.get('/queue/active');
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки активных задач:', error);
+      throw error;
+    }
+  },
+
+  // Получить завершенные задачи
+  getCompletedJobs: async (limit: number = 100) => {
+    try {
+      const response = await api.get('/queue/completed', { params: { limit } });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки завершенных задач:', error);
+      throw error;
+    }
+  },
+
+  // Отменить задачу
+  cancelJob: async (jobId: string, reason?: string) => {
+    try {
+      const response = await api.post(`/queue/cancel/${jobId}`, { reason });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка отмены задачи:', error);
+      throw error;
+    }
+  },
+
+  // Скачать результат задачи
+  downloadJobResult: async (jobId: string) => {
+    try {
+      const response = await api.get(`/queue/download/${jobId}`, { 
+        responseType: 'blob' 
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка скачивания результата задачи:', error);
+      throw error;
+    }
+  },
+
+  // Получить статистику очереди
+  getQueueStatistics: async () => {
+    try {
+      const response = await api.get('/queue/statistics');
+      return response.data;
+    } catch (error) {
+      console.error('Ошибка загрузки статистики очереди:', error);
+      throw error;
+    }
+  },
 
 };
 

@@ -10,7 +10,13 @@ import time
 from core.official_letters import generate_official_letter, get_letter_templates
 from core.budget_auto import auto_budget, SAMPLE_GESN_RATES, export_budget_to_excel
 from core.ppr_generator import generate_ppr, SAMPLE_PROJECT_DATA
-from core.gpp_creator import create_gpp, SAMPLE_WORKS_SEQ
+try:
+    from core.gpp_creator import create_gpp, SAMPLE_WORKS_SEQ
+    HAS_GPP_CREATOR = True
+except Exception:
+    create_gpp = None  # type: ignore
+    SAMPLE_WORKS_SEQ = []  # type: ignore
+    HAS_GPP_CREATOR = False
 from core.estimate_parser_enhanced import parse_estimate_gesn, get_regional_coefficients
 from core.unified_estimate_parser import parse_estimate_unified
 from core.autocad_bentley import analyze_bentley_model, autocad_export
@@ -24,6 +30,7 @@ HAS_NEO4J = False
 HAS_IMAGE_LIBS = False
 HAS_PDF_LIBS = False
 HAS_EXCEL_LIBS = False
+HAS_YOLO = False
 
 # Initialize optional dependencies as None
 GraphDatabase = None
@@ -34,6 +41,7 @@ pytesseract = None
 PdfReader = None
 pdf_tesseract = None
 pd = None
+yolo_model = None
 
 # Try to import optional dependencies
 try:
@@ -83,6 +91,15 @@ except ImportError:
     nx = None
     HAS_NETWORKX = False
     print("⚠️ NetworkX not available, scheduling tools will use simplified algorithms")
+
+# Try to import Ultralytics YOLO for object detection
+try:
+    from ultralytics import YOLO
+    HAS_YOLO = True
+except Exception:
+    YOLO = None  # type: ignore
+    HAS_YOLO = False
+    print("⚠️ Ultralytics YOLO not available, object detection will use OpenCV fallback")
 
 class ToolExecutionError(Exception):
     """Custom exception for tool execution errors"""
@@ -226,7 +243,8 @@ def validate_tool_parameters(tool_name: str, arguments: Dict[str, Any]) -> bool:
         "analyze_tender": ["tender_data"],
         "analyze_bentley_model": ["ifc_path"],
         "autocad_export": ["dwg_data"],
-        "monte_carlo_sim": ["project_data"]
+        "monte_carlo_sim": ["project_data"],
+        "transcribe_audio": ["audio_path"]
     }
     
     if tool_name in required_params:
@@ -337,6 +355,25 @@ class ToolRegistry:
                          "output_format": "json"
                      },
                      ui_placement="tools")
+
+        # Audio/STT tools
+        self.register("transcribe_audio",
+                     "Распознавание речи (Whisper) по аудио файлу",
+                     ToolCategory.ENHANCED,
+                     required_params=["audio_path"],
+                     optional_params={
+                         "language": "ru"
+                     },
+                     ui_placement="tools")
+
+        # PROJECT MANAGEMENT (optional tools)
+        if HAS_GPP_CREATOR:
+            self.register("create_gpp",
+                         "Создание ГПП",
+                         ToolCategory.PROJECT_MANAGEMENT,
+                         required_params=["works_seq"],
+                         optional_params={},
+                         ui_placement="tools")
         
         # Add more tools from the consolidated registry...
         # (truncated for brevity - full implementation would include all 47+ tools)
@@ -364,7 +401,6 @@ class ToolsSystem:
             "improve_letter": self._improve_letter,
             "auto_budget": self._auto_budget,
             "generate_ppr": self._generate_ppr,
-            "create_gpp": self._create_gpp,
             "parse_gesn_estimate": self._parse_gesn_estimate,
             "parse_batch_estimates": self._parse_batch_estimates,
             "parse_estimate_unified": self._parse_estimate_unified,
@@ -378,6 +414,7 @@ class ToolsSystem:
             # Enhanced tools
             "search_rag_database": self._search_rag_database,
             "analyze_image": self._analyze_image,
+            "transcribe_audio": self._transcribe_audio,
             "check_normative": self._check_normative,
             "create_document": self._create_document,
             "generate_construction_schedule": self._generate_construction_schedule,
@@ -399,6 +436,10 @@ class ToolsSystem:
             "calculate_critical_path": self._calculate_critical_path,
             "extract_financial_data": self._extract_financial_data,
         }
+
+        # Conditionally add optional tools
+        if HAS_GPP_CREATOR:
+            self.tool_methods["create_gpp"] = self._create_gpp
 
     def execute_tool_call(self, tool_plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -992,14 +1033,17 @@ class ToolsSystem:
 
     # Enhanced tool implementations
     def _search_rag_database(self, **kwargs) -> Dict[str, Any]:
-        """Search RAG database with real Qdrant integration"""
+        """Search RAG database with real Qdrant integration (SBERT-first + doc_type fallback)."""
         query = kwargs.get("query", "")
         doc_types = kwargs.get("doc_types", ["norms"])
-        k = kwargs.get("k", 5)
+        k = max(1, int(kwargs.get("k", 5)))
         
-        # Check if we should use SBERT for Russian queries
-        use_sbert = kwargs.get("use_sbert", False)
+        # Prefer SBERT for RU by default (better recall), can be overridden via kwargs
+        use_sbert = kwargs.get("use_sbert", True)
         embed_model = kwargs.get("embed_model", "nomic")
+        
+        # Fallback doc_type variants if strict filter yields nothing
+        fallback_doc_types = ["norms", "normative", "standards", "codes", "sp", "snp", "snip", "gost"]
         
         # Use SBERT for Russian construction terms
         if use_sbert or embed_model == "sbert_large_nlu_ru" or any(term in query for term in ["СП", "ГЭСН", "ФЗ", "ГОСТ", "СНиП", "СанПиН"]):
@@ -1030,12 +1074,27 @@ class ToolsSystem:
                 results = self.rag_system.query_with_embedding(query_embedding, k=k)
                 
                 # Filter by document types
+                all_results = results.get("results", [])
                 filtered_results = []
-                for result in results.get("results", []):
+                for result in all_results:
                     meta = result.get("meta", {})
-                    doc_type = meta.get("doc_type", "")
-                    if doc_type in doc_types or not doc_types:
+                    doc_type = str(meta.get("doc_type", "")).lower()
+                    if not doc_types or doc_type in [d.lower() for d in doc_types]:
                         filtered_results.append(result)
+                
+                # Fallbacks: broaden doc_types, then remove filter entirely
+                if not filtered_results and doc_types:
+                    broaden = [d for d in fallback_doc_types if d not in doc_types]
+                    broadened = []
+                    for result in all_results:
+                        meta = result.get("meta", {})
+                        doc_type = str(meta.get("doc_type", "")).lower()
+                        if doc_type in broaden:
+                            broadened.append(result)
+                    if broadened:
+                        filtered_results = broadened
+                if not filtered_results:
+                    filtered_results = all_results
                 
                 return {
                     "status": "success",
@@ -1052,12 +1111,27 @@ class ToolsSystem:
         results = self.rag_system.query(query, k=k)
         
         # Filter by document types
+        all_results = results.get("results", [])
         filtered_results = []
-        for result in results.get("results", []):
+        for result in all_results:
             meta = result.get("meta", {})
-            doc_type = meta.get("doc_type", "")
-            if doc_type in doc_types or not doc_types:
+            doc_type = str(meta.get("doc_type", "")).lower()
+            if not doc_types or doc_type in [d.lower() for d in doc_types]:
                 filtered_results.append(result)
+        
+        # Fallback broadening
+        if not filtered_results and doc_types:
+            broaden = [d for d in fallback_doc_types if d not in doc_types]
+            broadened = []
+            for result in all_results:
+                meta = result.get("meta", {})
+                doc_type = str(meta.get("doc_type", "")).lower()
+                if doc_type in broaden:
+                    broadened.append(result)
+            if broadened:
+                filtered_results = broadened
+        if not filtered_results:
+            filtered_results = all_results
         
         return {
             "status": "success",
@@ -1067,9 +1141,11 @@ class ToolsSystem:
         }
 
     def _analyze_image(self, **kwargs) -> Dict[str, Any]:
-        """Analyze image with real OCR/edge detection for construction"""
+        """Comprehensive image analysis: metadata + OCR + objects + dimensions.
+        Always attempts all available analyses and aggregates results.
+        """
         image_path = kwargs.get("image_path", "")
-        analysis_type = kwargs.get("analysis_type", "basic")
+        ocr_lang = kwargs.get("ocr_lang", "rus+eng")
         
         if not image_path or not Path(image_path).exists():
             raise ValueError(f"Image not found: {image_path}")
@@ -1078,6 +1154,7 @@ class ToolsSystem:
             raise ImportError("Required image processing libraries not installed")
         
         try:
+            warnings: list = []
             # Load image
             if cv2 is not None:
                 image = cv2.imread(image_path)
@@ -1086,59 +1163,141 @@ class ToolsSystem:
             else:
                 raise ImportError("OpenCV not available")
             
-            objects = []
-            result_text = ""
+            # 1) Metadata
+            metadata = {
+                "file_name": Path(image_path).name,
+                "shape": tuple(image.shape) if image is not None else None,
+            }
             
-            if analysis_type == "ocr":
-                # OCR analysis with Tesseract
-                if Image is not None and pytesseract is not None:
+            # 2) OCR (best-effort)
+            ocr_text = ""
+            if Image is not None and pytesseract is not None:
+                try:
                     pil_image = Image.open(image_path)
-                    result_text = pytesseract.image_to_string(pil_image, lang='rus')
-                else:
-                    raise ImportError("PIL or pytesseract not available")
-            elif analysis_type == "objects":
-                # Object detection with OpenCV
-                if cv2 is not None and np is not None:
+                    ocr_text = pytesseract.image_to_string(pil_image, lang=ocr_lang)
+                except Exception as ocr_e:
+                    warnings.append(f"OCR failed: {ocr_e}")
+            else:
+                if Image is None:
+                    warnings.append("PIL not available for OCR")
+                if pytesseract is None:
+                    warnings.append("pytesseract not available for OCR")
+            
+            # 3) Object detection (YOLO if available; fallback to Harris)
+            objects: List[Dict[str, Any]] = []
+            objects_count = 0
+            if HAS_YOLO and YOLO is not None:
+                global yolo_model
+                try:
+                    if yolo_model is None:
+                        # Lightweight default model; allow override via env later
+                        yolo_model = YOLO("yolov8n.pt")
+                    results = yolo_model(image_path)
+                    # Parse results (first image)
+                    if results and len(results) > 0:
+                        res = results[0]
+                        names = res.names if hasattr(res, 'names') else {}
+                        for b in res.boxes:
+                            try:
+                                cls_id = int(b.cls.item()) if hasattr(b.cls, 'item') else int(b.cls)
+                                conf = float(b.conf.item()) if hasattr(b.conf, 'item') else float(b.conf)
+                                xyxy = b.xyxy[0].tolist() if hasattr(b, 'xyxy') else []
+                                label = names.get(cls_id, f"class_{cls_id}")
+                                objects.append({
+                                    "label": str(label),
+                                    "confidence": round(conf, 3),
+                                    "bbox": [int(x) for x in xyxy]
+                                })
+                            except Exception:
+                                continue
+                    objects_count = len(objects)
+                except Exception as yolo_e:
+                    warnings.append(f"YOLO detection failed: {yolo_e}")
+            # Fallback to Harris if YOLO unavailable or failed
+            if objects_count == 0 and cv2 is not None and np is not None:
+                try:
                     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                    # Simple corner detection for demonstration
                     corners = cv2.cornerHarris(gray, 2, 3, 0.04)
                     corners = cv2.dilate(corners, np.ones((3,3),np.uint8))
-                    # Count corners as approximation of object count
-                    objects_count = np.sum(corners > 0.01 * corners.max())
-                    objects = [f"Object_{i}" for i in range(min(objects_count, 20))]
-                else:
-                    raise ImportError("OpenCV or numpy not available")
-            elif analysis_type == "dimensions":
-                # Dimension measurement using edge detection
-                if cv2 is not None:
-                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                    edges = cv2.Canny(gray, 50, 150)
-                    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    # Find largest contour as main object
-                    if contours:
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        x, y, w, h = cv2.boundingRect(largest_contour)
-                        result_text = f"Object dimensions: {w} x {h} pixels"
-                    else:
-                        result_text = "No objects detected"
-                else:
-                    raise ImportError("OpenCV not available")
+                    objects_count = int(np.sum(corners > 0.01 * corners.max()))
+                    # Represent corners as pseudo objects without bboxes
+                    objects = [{"label": "corner_proxy", "confidence": None, "bbox": None} for _ in range(min(objects_count, 200))]
+                except Exception as obj_e:
+                    warnings.append(f"Object detection fallback failed: {obj_e}")
             else:
-                # Basic analysis - extract metadata
-                if image is not None:
-                    result_text = f"Image: {Path(image_path).name}, Size: {image.shape}"
-                else:
-                    result_text = f"Image: {Path(image_path).name}"
+                if np is None:
+                    warnings.append("numpy not available for object detection fallback")
+            
+            # 4) Dimensions via edges/contours
+            dimensions = {"width": None, "height": None}
+            try:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                edges = cv2.Canny(gray, 50, 150)
+                contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    x, y, w, h = cv2.boundingRect(largest_contour)
+                    dimensions = {"width": int(w), "height": int(h)}
+            except Exception as dim_e:
+                warnings.append(f"Dimension analysis failed: {dim_e}")
+            
+            # Result summary string
+            summary = f"Image: {metadata['file_name']}, Size: {metadata['shape']}"
+            if dimensions["width"] and dimensions["height"]:
+                summary += f", Main object bbox: {dimensions['width']}x{dimensions['height']} px"
+            if objects_count:
+                summary += f", Objects detected: {objects_count}"
+            if ocr_text and ocr_text.strip():
+                snippet = ocr_text.strip().replace("\n", " ")
+                if len(snippet) > 200:
+                    snippet = snippet[:200] + "..."
+                summary += f". OCR: {snippet}"
             
             return {
                 "status": "success",
-                "analysis_type": analysis_type,
-                "result": result_text,
-                "objects": objects
+                "analysis_type": "comprehensive",
+                "result": summary,
+                "metadata": metadata,
+                "ocr_text": ocr_text,
+                "objects": objects,
+                "dimensions": dimensions,
+                "warnings": warnings
             }
         except Exception as e:
             raise ValueError(f"Image analysis error: {str(e)}")
+
+    def _transcribe_audio(self, **kwargs) -> Dict[str, Any]:
+        """Speech-to-text transcription using Whisper.
+        Requires ffmpeg installed and a valid audio file path.
+        """
+        audio_path = kwargs.get("audio_path")
+        language = kwargs.get("language", "ru")
+        if not audio_path or not Path(audio_path).exists():
+            raise ValueError(f"Audio file not found: {audio_path}")
+        try:
+            import whisper
+            import subprocess
+            # Ensure ffmpeg is available
+            try:
+                subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                raise RuntimeError("FFmpeg not found. Please install FFmpeg: https://ffmpeg.org/download.html")
+
+            model = whisper.load_model("base")
+            result = model.transcribe(audio_path, language=language)
+            text = result.get("text", "").strip()
+            segments = result.get("segments", [])
+            return {
+                "status": "success",
+                "text": text,
+                "segments": segments,
+                "language": language,
+                "result": text
+            }
+        except ImportError:
+            raise ImportError("Whisper not installed. Install with: pip install openai-whisper")
+        except Exception as e:
+            raise RuntimeError(f"Transcription failed: {e}")
 
     def _check_normative(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Check normative compliance with stage10 compliance viol99%"""

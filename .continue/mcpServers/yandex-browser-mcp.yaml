@@ -1,0 +1,14 @@
+"name: Yandex Browser MCP Server
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: Yandex Browser MCP
+    command: npx
+    args:
+      - -y
+      - @modelcontextprotocol/server
+    env: 
+      MCP_SERVER_PORT: 3000
+      BROWSER_TYPE: yandex
+    description: MCP server for capturing frontend errors from Yandex Browser console
+"

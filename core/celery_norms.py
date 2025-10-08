@@ -29,8 +29,8 @@ except ImportError as e:
     GraphDatabase = None
     print(f"Warning: Neo4j not available: {e}")
 
-# Import norms updater
-from core.norms_updater import NormsUpdater
+# Import norms updater - DISABLED (module not found)
+# from core.norms_updater import NormsUpdater
 
 # Import Celery
 from core.celery_app import celery_app
@@ -50,7 +50,7 @@ class NormsUpdateTask:
         self.neo4j_user = neo4j_user or os.getenv("NEO4J_USER", "neo4j")
         self.neo4j_password = neo4j_password or os.getenv("NEO4J_PASSWORD", "neopassword")
         self.driver = None
-        self.norms_updater = NormsUpdater()
+        # self.norms_updater = NormsUpdater()  # DISABLED (module not found)
         
         # Initialize Neo4j driver if available
         if NEO4J_AVAILABLE and GraphDatabase:
@@ -78,9 +78,13 @@ class NormsUpdateTask:
         logger.info(f"Starting norms update for categories: {categories or 'all'}, force: {force}")
         
         try:
-            # Run async update in a new event loop
-            results = asyncio.run(self.norms_updater.update_norms_daily(categories))
-            logger.info(f"Norms update completed: {results['documents_downloaded']} documents downloaded")
+            # Run async update in a new event loop - DISABLED (norms_updater not found)
+            # results = asyncio.run(self.norms_updater.update_norms_daily(categories))
+            # logger.info(f"Norms update completed: {results['documents_downloaded']} documents downloaded")
+            
+            # Fallback: return empty results
+            results = {'documents_downloaded': 0, 'status': 'disabled'}
+            logger.info("Norms update disabled - norms_updater module not found")
             
             # Process newly downloaded documents
             if results['documents_downloaded'] > 0:

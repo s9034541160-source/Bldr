@@ -52,7 +52,6 @@ except ImportError as e:
 
 DOCX2PDF_AVAILABLE = False
 try:
-    # This import might not be available, so we'll handle it gracefully
     pass
 except ImportError as e:
     logging.warning(f"docx2pdf not available: {e}")
@@ -60,49 +59,85 @@ except ImportError as e:
 # Import configuration
 from core.config import MODELS_CONFIG, get_capabilities_prompt
 
+# Path to shared runtime settings (same as main.py settings.json)
+import os as _os
+_SETTINGS_PATH = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), 'settings.json')
+
+def _load_settings_json() -> Dict[str, Any]:
+    try:
+        if _os.path.exists(_SETTINGS_PATH):
+            import json as _json
+            with open(_SETTINGS_PATH, 'r', encoding='utf-8') as f:
+                return _json.load(f) or {}
+    except Exception:
+        return {}
+    return {}
+
+def _get_role_override(role: str) -> Dict[str, Any]:
+    try:
+        data = _load_settings_json()
+        overrides = data.get('models_overrides') or {}
+        ov = overrides.get(role) or {}
+        if isinstance(ov, dict):
+            return ov
+        return {}
+    except Exception:
+        return {}
+
+def _merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(base, dict):
+        base = {}
+    if not isinstance(override, dict):
+        override = {}
+    merged = dict(base)
+    for k, v in override.items():
+        # Allow only known fields to avoid accidental pollution
+        if k in ('model', 'base_url', 'temperature', 'max_tokens', 'timeout') and v not in (None, ''):
+            merged[k] = v
+    return merged
+
 class ModelManager:
     """Enhanced ModelManager with role-based configuration and self-aware agents"""
     
-    def __init__(self, cache_size: int = 12, ttl_minutes: int = 30):
+    def __init__(self, cache_size: int = 3, ttl_minutes: int = 5):
         """
-        Initialize ModelManager with LRU cache and TTL.
+        Initialize ModelManager with strict memory management.
         
         Args:
-            cache_size: Maximum number of models to cache (default: 12)
-            ttl_minutes: Time-to-live for cached models in minutes (default: 30)
+            cache_size: Maximum number of models to cache (default: 3 - только координатор + 2 других)
+            ttl_minutes: Time-to-live for cached models in minutes (default: 5 - быстро выгружаем)
         """
         self.cache_size = cache_size
         self.ttl_minutes = ttl_minutes
         self.model_cache: Dict[str, Dict[str, Any]] = {}
         self.last_access: Dict[str, datetime] = {}
+        self.active_models: List[str] = []  # Порядок использования моделей
         
-        # Preload priority models
+        # Preload only coordinator
         self._preload_priority_models()
     
     def _preload_priority_models(self):
-        """Preload priority models to ensure fast response times."""
-        priority_roles = ["coordinator", "chief_engineer", "analyst"]
+        """Preload only coordinator to save memory."""
         print("Предзагрузка приоритетных моделей...")
         
-        for role in priority_roles:
-            if role in MODELS_CONFIG:
-                config = MODELS_CONFIG[role]
-                try:
-                    print(f"Загрузка модели {config['model']} для роли {role} с base_url {config['base_url']}")
-                    client = self.get_model_client(role)
-                    if client:
-                        print(f"✓ Предзагружена модель для роли {role}")
-                    else:
-                        print(f"✗ Не удалось загрузить модель для роли {role}")
-                except Exception as e:
-                    print(f"✗ Ошибка при загрузке модели для роли {role}: {e}")
+        # Загружаем только координатора для экономии памяти
+        if "coordinator" in MODELS_CONFIG:
+            config = MODELS_CONFIG["coordinator"]
+            try:
+                print(f"Загрузка модели {config['model']} для роли coordinator с base_url {config['base_url']}")
+                client = self.get_model_client("coordinator")
+                if client:
+                    print(f"OK: Предзагружена модель для роли coordinator")
+                else:
+                    print(f"FAIL: Не удалось загрузить модель для роли coordinator")
+            except Exception as e:
+                print(f"FAIL: Ошибка при загрузке модели для роли coordinator: {e}")
         
         print("Предзагрузка завершена")
     
-    @lru_cache(maxsize=12)
     def get_model_client(self, role: str) -> Optional[Any]:
         """
-        Get model client for specific role with caching.
+        Get model client for specific role with strict memory management.
         
         Args:
             role: Role name (e.g., 'coordinator', 'chief_engineer')
@@ -115,30 +150,40 @@ class ModelManager:
             logging.warning(f"Role {role} not found in MODELS_CONFIG")
             return None
             
-        config = MODELS_CONFIG[role]
+        # Merge config with runtime override (from settings.json)
+        base_cfg = MODELS_CONFIG[role]
+        override = _get_role_override(role)
+        config = _merge_config(base_cfg, override)
+        cache_key = f"{role}_{config.get('base_url')}_{config.get('model')}"
         
         # Check cache first
-        cache_key = f"{role}_{config['base_url']}_{config['model']}"
         if cache_key in self.model_cache:
             cached_entry = self.model_cache[cache_key]
             if datetime.now() - self.last_access[cache_key] < timedelta(minutes=self.ttl_minutes):
+                # Обновляем порядок использования
+                if cache_key in self.active_models:
+                    self.active_models.remove(cache_key)
+                self.active_models.append(cache_key)
                 self.last_access[cache_key] = datetime.now()
                 return cached_entry['client']
             else:
                 # Remove expired entry
-                del self.model_cache[cache_key]
-                del self.last_access[cache_key]
+                self._unload_model(cache_key)
+        
+        # Проверяем лимит памяти - выгружаем старые модели
+        self._enforce_memory_limit()
+        
+        # Если это не координатор, выгружаем все остальные модели
+        if role != "coordinator":
+            self._unload_non_coordinator_models()
         
         try:
             # Import LangChain components
             from langchain_openai import ChatOpenAI
             
-            # Create model client with role-specific parameters
             # For local models via LM Studio, we don't need an API key
-            # Set environment variable instead
             os.environ["OPENAI_API_KEY"] = "not-needed"
             
-            # Create client with all parameters
             client = ChatOpenAI(
                 model=config['model'],
                 temperature=config['temperature'],
@@ -195,54 +240,20 @@ class ModelManager:
     def get_capabilities_prompt(self, role: str) -> Optional[str]:
         """
         Get capabilities prompt for specific role.
-        
-        Args:
-            role: Role name
-            
-        Returns:
-            Capabilities prompt string or None
         """
         return get_capabilities_prompt(role)
     
     def get_role_responsibilities(self, role: str) -> List[str]:
-        """
-        Get responsibilities for specific role.
-        
-        Args:
-            role: Role name
-            
-        Returns:
-            List of responsibilities
-        """
         if role in MODELS_CONFIG:
             return MODELS_CONFIG[role].get('responsibilities', [])
         return []
     
     def get_role_exclusions(self, role: str) -> List[str]:
-        """
-        Get exclusions for specific role.
-        
-        Args:
-            role: Role name
-            
-        Returns:
-            List of exclusions
-        """
         if role in MODELS_CONFIG:
             return MODELS_CONFIG[role].get('exclusions', [])
         return []
     
     def get_role_tools(self, role: str) -> List[str]:
-        """
-        Get available tools for specific role.
-        
-        Args:
-            role: Role name
-            
-        Returns:
-            List of tool names
-        """
-        # This would be expanded based on the actual tools available for each role
         role_tool_mapping = {
             "coordinator": ["search_rag_database", "gen_docx"],
             "chief_engineer": ["search_rag_database", "vl_analyze_photo", "gen_diagram"],
@@ -255,14 +266,7 @@ class ModelManager:
         }
         return role_tool_mapping.get(role, [])
     
-    # Additional methods for testing and statistics
     def get_model_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about loaded models and cache.
-        
-        Returns:
-            Dictionary with model statistics
-        """
         return {
             "loaded_models": len(self.model_cache),
             "max_cache_size": self.cache_size,
@@ -270,7 +274,7 @@ class ModelManager:
             "model_details": {
                 role: {
                     "usage_stats": {
-                        "call_count": self._get_model_call_count(role),  # Track actual model usage
+                        "call_count": self._get_model_call_count(role),
                         "last_access": str(self.last_access.get(f"{role}_{MODELS_CONFIG[role]['base_url']}_{MODELS_CONFIG[role]['model']}", "Never"))
                     }
                 } for role in MODELS_CONFIG.keys()
@@ -278,28 +282,73 @@ class ModelManager:
         }
     
     def get_all_roles(self) -> List[str]:
-        """
-        Get all available roles.
-        
-        Returns:
-            List of role names
-        """
         return list(MODELS_CONFIG.keys())
     
     def _get_model_call_count(self, role: str) -> int:
-        """
-        Get the number of calls made to a specific model.
-        
-        Args:
-            role: Role name
-            
-        Returns:
-            Number of calls made to the model
-        """
-        # Track actual model usage by counting accesses to this role's cache key
-        cache_key = f"{role}_{MODELS_CONFIG[role]['base_url']}_{MODELS_CONFIG[role]['model']}"
-        # Count how many times this model has been accessed
+        base_cfg = MODELS_CONFIG.get(role, {})
+        ov = _get_role_override(role)
+        cfg = _merge_config(base_cfg, ov)
+        cache_key = f"{role}_{cfg.get('base_url')}_{cfg.get('model')}"
         return len([key for key in self.last_access.keys() if key.startswith(role)])
+    
+    def _enforce_memory_limit(self):
+        """Строгое соблюдение лимита памяти - выгружаем старые модели."""
+        while len(self.model_cache) >= self.cache_size:
+            if not self.active_models:
+                break
+            # Выгружаем самую старую модель
+            oldest_model = self.active_models.pop(0)
+            self._unload_model(oldest_model)
+    
+    def _unload_non_coordinator_models(self):
+        """Выгружаем все модели кроме координатора для экономии памяти."""
+        coordinator_keys = [key for key in self.model_cache.keys() if key.startswith("coordinator_")]
+        other_keys = [key for key in self.model_cache.keys() if not key.startswith("coordinator_")]
+        
+        for key in other_keys:
+            self._unload_model(key)
+    
+    def _unload_model(self, cache_key: str):
+        """Выгружаем конкретную модель из памяти."""
+        if cache_key in self.model_cache:
+            print(f"🗑️ Выгружаем модель из памяти: {cache_key}")
+            del self.model_cache[cache_key]
+            if cache_key in self.last_access:
+                del self.last_access[cache_key]
+            if cache_key in self.active_models:
+                self.active_models.remove(cache_key)
+    
+    def force_cleanup(self):
+        """Принудительная очистка всех моделей кроме координатора."""
+        print("🧹 Принудительная очистка памяти (кроме координатора)...")
+        coordinator_keys = [key for key in self.model_cache.keys() if key.startswith("coordinator_")]
+        
+        # Сохраняем только координатора
+        new_cache = {}
+        new_access = {}
+        new_active = []
+        
+        for key in coordinator_keys:
+            if key in self.model_cache:
+                new_cache[key] = self.model_cache[key]
+            if key in self.last_access:
+                new_access[key] = self.last_access[key]
+            if key in self.active_models:
+                new_active.append(key)
+        
+        self.model_cache = new_cache
+        self.last_access = new_access
+        self.active_models = new_active
+        
+        print(f"✅ Очистка завершена. Осталось моделей: {len(self.model_cache)}")
+
+    def clear_all_models(self):
+        """Полная очистка кеша моделей (включая координатора)."""
+        print("🧹 Полная очистка кеша моделей...")
+        self.model_cache.clear()
+        self.last_access.clear()
+        self.active_models.clear()
+        print("✅ Полная очистка завершена. Кеш пуст.")
 
 # Global instance
 model_manager = ModelManager()

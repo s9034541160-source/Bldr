@@ -1,0 +1,87 @@
+{
+  "models_overrides": {
+    "coordinator": {
+      "model": "qwen/qwen3-coder-30b"
+    },
+    "chief_engineer": {
+      "model": "qwen/qwen2.5-vl-7b"
+    },
+    "structural_geotech_engineer": {
+      "model": "mistralai/mistral-nemo-instruct-2407"
+    },
+    "project_manager": {
+      "model": "deepseek/deepseek-r1-0528-qwen3-8b"
+    },
+    "construction_safety": {
+      "model": "qwen/qwen2.5-vl-7b"
+    },
+    "qc_compliance": {
+      "model": "mistralai/mistral-nemo-instruct-2407"
+    },
+    "analyst": {
+      "model": "qwen/qwen2.5-vl-7b"
+    },
+    "tech_coder": {
+      "model": "qwen/qwen3-coder-30b"
+    }
+  },
+  "tools_overrides": {
+    "search_rag_database": {
+      "title": "Поиск в базе знаний (RAG)",
+      "description": "Ищет релевантные фрагменты в базе знаний по запросу",
+      "category": "core_rag",
+      "ui_placement": "tools",
+      "enabled": true,
+      "params": [
+        {
+          "name": "query",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Поисковый запрос",
+          "enum": null,
+          "ui": null
+        },
+        {
+          "name": "doc_types",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Типы документов (через запятую)",
+          "enum": null,
+          "ui": null
+        },
+        {
+          "name": "k",
+          "type": "number",
+          "required": false,
+          "default": 5,
+          "description": "Количество результатов",
+          "enum": null,
+          "ui": null
+        },
+        {
+          "name": "use_sbert",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "description": "Использовать SBERT для RU",
+          "enum": null,
+          "ui": null
+        }
+      ]
+    }
+  },
+  "coordinator": {
+    "planning_enabled": true,
+    "json_mode_enabled": false,
+    "max_iterations": 2,
+    "simple_plan_fast_path": true,
+    "artifact_default_enabled": true,
+    "complexity_auto_expand": false,
+    "complexity_thresholds": {
+      "tools_count": 2,
+      "time_est_minutes": 10
+    }
+  }
+}

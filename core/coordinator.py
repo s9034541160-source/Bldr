@@ -72,26 +72,44 @@ class Coordinator:
         Returns:
             JSON-план действий
         """
-        print(f"Анализ запроса: {user_input}")
+        # If message contains transcription wrapper, extract the actual text
+        normalized_input = user_input
+        try:
+            marker = "Транскрипция:"
+            if isinstance(user_input, str) and marker in user_input:
+                after = user_input.split(marker, 1)[1].strip()
+                # Trim surrounding quotes if any
+                if after.startswith("'") or after.startswith('"'):
+                    after = after[1:]
+                if after.endswith("'") or after.endswith('"'):
+                    after = after[:-1]
+                if len(after) >= 3:
+                    normalized_input = after
+        except Exception:
+            normalized_input = user_input
+
+        print(f"Анализ запроса: {normalized_input}")
         
         # Добавить запрос в историю
         self._add_to_history({
             "type": "user_request",
-            "content": user_input,
+            "content": normalized_input,
             "timestamp": __import__('time').time()
         })
         
+        # Искусственных упрощённых правил нет: дальнейшее решение — на стороне модели/плана
+
         # Parse request using SBERT for better accuracy
         try:
             from core.parse_utils import parse_request_with_sbert
-            parse_result = parse_request_with_sbert(user_input)
+            parse_result = parse_request_with_sbert(normalized_input)
             print(f"SBERT Parse Result: {parse_result}")
         except Exception as e:
             print(f"Error in SBERT parsing: {e}")
             parse_result = {"intent": "unknown", "confidence": 0.0, "entities": {}}
         
         # Определить тип запроса и необходимые инструменты
-        plan = self._generate_plan(user_input, parse_result)
+        plan = self._generate_plan(normalized_input, parse_result)
         
         return plan
     
@@ -247,21 +265,21 @@ class Coordinator:
                 ]
             }
         elif any(keyword in user_input.lower() for keyword in ["норма", "сп ", "гост", "снип", "фз", "пункт"]):
-            # Нормативный запрос
+            # Простой нормативный запрос - только поиск и ответ
             return {
                 "status": "planning",
-                "query_type": "normative",
+                "query_type": "normative_simple",
                 "requires_tools": True,
                 "tools": [
-                    {"name": "search_rag_database", "arguments": {"query": user_input, "doc_types": ["norms"]}},
-                    {"name": "find_normatives", "arguments": {"query": user_input}}
+                    {"name": "search_rag_database", "arguments": {"query": user_input, "doc_types": ["norms"], "n_results": 3}}
                 ],
-                "roles_involved": ["chief_engineer"],
+                "roles_involved": ["coordinator"],
                 "required_data": ["нормативные документы"],
                 "next_steps": [
-                    "Поиск соответствующих нормативных документов",
-                    "Извлечение требуемых пунктов"
-                ]
+                    "Поиск нормативных документов",
+                    "Ответ пользователю"
+                ],
+                "requires_specialists": False  # Модель сама решает
             }
         elif any(keyword in user_input.lower() for keyword in ["проект", "ппр", "технологическая карта", "работы", "график"]):
             # Проектный запрос
@@ -481,9 +499,42 @@ class Coordinator:
         """
         tool_results = []
         
-        if "tools" in plan:
-            # Используем новый метод execute_tool_call для выполнения инструментов
-            tool_results = self.tools_system.execute_tool_call(plan["tools"])
+        if "tools" in plan and plan["tools"]:
+            print(f"Выполнение {len(plan['tools'])} инструментов...")
+            # Выполняем каждый инструмент из плана
+            for i, tool_info in enumerate(plan["tools"]):
+                if isinstance(tool_info, dict) and "name" in tool_info:
+                    tool_name = tool_info["name"]
+                    # Используем "arguments" вместо "params" согласно структуре плана
+                    tool_params = tool_info.get("arguments", {})
+                    print(f"  → Выполнение {tool_name} с аргументами: {tool_params}")
+                    
+                    try:
+                        result = self.tools_system.execute_tool(tool_name, **tool_params)
+                        print(f"  ← Результат: {result}")
+                        
+                        # Обработка результата
+                        if hasattr(result, 'data'):
+                            result_data = result.data
+                        elif hasattr(result, 'is_success') and result.is_success():
+                            result_data = getattr(result, 'data', str(result))
+                        else:
+                            result_data = str(result)
+                        
+                        tool_results.append({
+                            "tool_name": tool_name,
+                            "result": result_data,
+                            "status": "success" if hasattr(result, 'is_success') and result.is_success() else "error"
+                        })
+                    except Exception as e:
+                        print(f"  ← Ошибка: {e}")
+                        tool_results.append({
+                            "tool_name": tool_name,
+                            "result": str(e),
+                            "status": "error"
+                        })
+        else:
+            print("Инструменты не требуются или не найдены в плане")
         
         return tool_results
     
@@ -553,9 +604,9 @@ class Coordinator:
             prompt += "Результаты выполнения инструментов:\n"
             for result in tool_results:
                 if result.get("status") == "success":
-                    prompt += f"- {result.get('tool', 'Инструмент')}: {result.get('result', 'Результат')}\n"
+                    prompt += f"- {result.get('tool_name', 'Инструмент')}: {result.get('result', 'Результат')}\n"
                 else:
-                    prompt += f"- {result.get('tool', 'Инструмент')}: ОШИБКА - {result.get('error', 'Неизвестная ошибка')}\n"
+                    prompt += f"- {result.get('tool_name', 'Инструмент')}: ОШИБКА - {result.get('result', 'Неизвестная ошибка')}\n"
             prompt += "\n"
         
         prompt += "Пожалуйста, предоставьте профессиональный анализ и рекомендации по данной задаче."
@@ -564,53 +615,40 @@ class Coordinator:
     def synthesize_response(self, user_input: str, tool_results: List[Dict[str, Any]], 
                           specialist_responses: Optional[List[Dict[str, Any]]] = None) -> str:
         """
-        Синтез финального ответа на основе результатов инструментов и ответов специалистов.
-        
-        Args:
-            user_input: Запрос пользователя
-            tool_results: Результаты выполнения инструментов
-            specialist_responses: Ответы специалистов (опционально)
-            
-        Returns:
-            Финальный ответ в точном формате
+        СИНТЕЗ ФИНАЛЬНОГО ОТВЕТА НА ОСНОВЕ РЕЗУЛЬТАТОВ ИНСТРУМЕНТОВ.
         """
         print(f"Синтез ответа на запрос: {user_input}")
-        
-        # Подготовить структурированный ответ
-        response_parts = []
-        
-        # Добавить результаты инструментов
-        if tool_results:
-            response_parts.append("РЕЗУЛЬТАТЫ ИНСТРУМЕНТОВ:")
-            for result in tool_results:
-                if result.get("status") == "success":
-                    tool_name = result.get("tool", "Неизвестный инструмент")
-                    response_parts.append(f"[ИНСТРУМЕНТ: {tool_name}] {result.get('result', 'Нет результата')}")
-                else:
-                    response_parts.append(f"Ошибка инструмента: {result.get('error', 'Неизвестная ошибка')}")
-        
-        # Добавить мнения специалистов
-        if specialist_responses:
-            response_parts.append("\nМНЕНИЯ СПЕЦИАЛИСТОВ:")
-            for response in specialist_responses:
-                role = response.get("role", "Неизвестная роль")
-                specialist_response = response.get("response", "Нет ответа")
-                response_parts.append(f"[СПЕЦИАЛИСТ: {role}] {specialist_response}")
-        
-        # Сформировать финальный ответ
-        if response_parts:
-            final_response = "\n".join(response_parts)
-        else:
-            final_response = f"По вашему запросу '{user_input}' не найдено релевантной информации."
-        
-        # Добавить ответ в историю
-        self._add_to_history({
-            "type": "coordinator_response",
-            "content": final_response,
-            "timestamp": __import__('time').time()
-        })
-        
-        return final_response
+
+        # 1) Прямой ответ по результатам RAG, если есть
+        try:
+            for result in (tool_results or []):
+                if result.get("tool_name") == "search_rag_database" and result.get("status") == "success":
+                    data = result.get("result") or {}
+                    if isinstance(data, dict):
+                        rag_results = data.get("results", []) or (data.get("data", {}) if isinstance(data.get("data"), dict) else {}).get("results", [])
+                        if rag_results:
+                            first = rag_results[0]
+                            content = (first.get("content") if isinstance(first, dict) else None) or first.get("chunk") or "Не найдено содержимого"
+                            meta = (first.get("metadata") if isinstance(first, dict) else {}) or {}
+                            source = meta.get("source") or meta.get("doc") or meta.get("title") or "Неизвестный источник"
+                            return f"Найдено: {content} [Источник: {source}]"
+        except Exception as e:
+            print(f"Ошибка быстрого RAG-ответа: {e}")
+
+        # 2) Приветствие/самопредставление
+        try:
+            low = (user_input or '').lower()
+            if any(kw in low for kw in ["привет", "кто ты", "что ты", "как дела", "представься"]) or ("как" in low and ("зовут" in low or "называть" in low or "тебя" in low)):
+                return (
+                    "Привет! Я — Bldr2, ваш AI‑координатор в системе Bldr Empire. "
+                    "Ищу нормы (СП, ГОСТ, СНиП), генерирую сметы и отчёты, создаю чек‑листы и графики. "
+                    "Сформулируйте задачу — я соберу данные инструментами и верну результат (чаще всего в виде файла)."
+                )
+        except Exception:
+            pass
+
+        # 3) По умолчанию: если ничего полезного не найдено
+        return "Не удалось найти информацию по вашему запросу. Попробуйте уточнить."
     
     def clean_response(self, response: str) -> str:
         """
@@ -649,13 +687,19 @@ class Coordinator:
         plan = self.analyze_request(user_input)
         print(f"Сформирован план: {json.dumps(plan, ensure_ascii=False, indent=2)}")
         
+        # Единый путь обработки - доверяем модели самой решать
+
         # 2. Выполнение инструментов
         tool_results = self.execute_tools(plan)
         print(f"Выполнены инструменты: {len(tool_results)} результатов")
         
-        # 3. Координация с специалистами
-        specialist_responses = self._coordinate_with_specialists(plan, tool_results)
-        print(f"Получены ответы специалистов: {len(specialist_responses)} ответов")
+        # 3. Координация с специалистами (если требуется)
+        specialist_responses = []
+        if plan.get("requires_specialists", True):  # По умолчанию привлекаем специалистов
+            specialist_responses = self._coordinate_with_specialists(plan, tool_results)
+            print(f"Получены ответы специалистов: {len(specialist_responses)} ответов")
+        else:
+            print("Пропускаем специалистов по решению модели")
         
         # 4. Синтез финального ответа
         final_response = self.synthesize_response(user_input, tool_results, specialist_responses)
@@ -663,9 +707,15 @@ class Coordinator:
         # 5. Очистка ответа
         cleaned_response = self.clean_response(final_response)
         
+        # 6. Принудительная очистка памяти (кроме координатора)
+        try:
+            self.model_manager.force_cleanup()
+        except Exception as e:
+            print(f"Ошибка очистки памяти: {e}")
+        
         return cleaned_response
 
-    def process_photo(self, base64_image: str) -> str:
+    def process_photo(self, image_input: str) -> str:
         """
         Обработка фотографии с использованием Qwen2.5-vl-7b для реального анализа.
         
@@ -676,16 +726,102 @@ class Coordinator:
             Результат анализа
         """
         try:
-            # Использовать инструмент анализа изображений
-            result = self.tools_system.execute_tool("analyze_image", {
-                "image_data": base64_image,
-                "analysis_type": "objects"
-            })
-            
-            if result.get("status") == "success":
-                return f"Анализ изображения завершен: {result.get('result', 'Нет результата')}"
+            import os
+            import base64
+            import tempfile
+
+            # Determine if input is a base64 string or file path
+            is_existing_path = isinstance(image_input, str) and os.path.exists(image_input)
+            temp_path = image_input
+            base64_str = None
+
+            if not is_existing_path:
+                # Assume base64 string without data URL header
+                base64_str = image_input
+                # Create temp file for tool processing
+                fd, tmpfile = tempfile.mkstemp(suffix=".jpg")
+                os.close(fd)
+                with open(tmpfile, "wb") as f:
+                    try:
+                        f.write(base64.b64decode(base64_str))
+                    except Exception:
+                        # If header present like data:image/jpeg;base64,
+                        b64 = base64_str.split(",", 1)[-1]
+                        f.write(base64.b64decode(b64))
+                temp_path = tmpfile
             else:
-                return f"Ошибка анализа изображения: {result.get('error', 'Неизвестная ошибка')}"
+                # If we only have a path, try to read and create base64 for VL model
+                try:
+                    with open(image_input, "rb") as f:
+                        base64_str = base64.b64encode(f.read()).decode("utf-8")
+                except Exception:
+                    base64_str = None
+
+            # Decide VL capability
+            try:
+                from core.config import MODELS_CONFIG
+                coord_model = MODELS_CONFIG.get("coordinator", {}).get("model", "")
+                is_vl = isinstance(coord_model, str) and ("-vl-" in coord_model.lower() or "vl" in coord_model.lower())
+            except Exception:
+                is_vl = False
+
+            # 1) Run tool analysis on file path
+            tool_kwargs = {
+                "image_path": temp_path,
+                "analysis_type": "objects" if is_vl else "basic",
+                "ocr_lang": "rus",
+                "detect_objects": True,
+                "extract_dimensions": True if is_vl else False,
+            }
+            tool_result = None
+            if getattr(self, "tools_system", None):
+                tool_result = self.tools_system.execute_tool("analyze_image", **tool_kwargs)
+
+            # 2) Run VL model analysis with base64 data URL if available
+            vl_summary = None
+            if is_vl and base64_str:
+                try:
+                    # LM Studio OpenAI-compatible often expects plain strings; pass text + image URL as string
+                    prompt_text = (
+                        "Проанализируй фото и кратко опиши, что на нём, возможные проблемы/объекты.\n"
+                        "Изображение: data:image/jpeg;base64," + base64_str
+                    )
+                    vl_resp = self.model_manager.query("coordinator", [
+                        {"role": "user", "content": prompt_text}
+                    ])
+                    # Clamp overly short/bad replies
+                    vl_summary = str(vl_resp).strip()
+                except Exception as vl_e:
+                    vl_summary = f"VL-анализ недоступен: {vl_e}"
+
+            # Build combined response
+            parts = []
+            if vl_summary:
+                parts.append(f"[КООРДИНАТОР-VL] {vl_summary}")
+
+            if tool_result is not None:
+                if hasattr(tool_result, "is_success") and tool_result.is_success():
+                    data = getattr(tool_result, "data", {}) or {}
+                    if isinstance(data, dict):
+                        brief = data.get("summary") or data.get("result") or str(data)[:500]
+                    else:
+                        brief = str(data)
+                    parts.append(f"[ИНСТРУМЕНТ analyze_image] {brief}")
+                else:
+                    err = getattr(tool_result, "error", None)
+                    parts.append(f"[ИНСТРУМЕНТ analyze_image] Ошибка: {err or 'Неизвестная ошибка'}")
+
+            # Cleanup temp file if we created it
+            try:
+                if not is_existing_path and temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+
+            if parts:
+                return "\n\n".join(parts)
+            return "Анализ изображения выполнен, но результатов нет"
+
         except Exception as e:
             return f"Ошибка обработки фотографии: {str(e)}"
     
@@ -701,13 +837,15 @@ class Coordinator:
         """
         try:
             # Использовать инструмент поиска в RAG
-            result = self.tools_system.execute_tool("search_rag_database", {
-                "query": query,
-                "doc_types": ["norms", "ppr", "smeta", "rd", "educational"]
-            })
+            result = self.tools_system.execute_tool(
+                "search_rag_database",
+                query=query,
+                doc_types=["norms", "ppr", "smeta", "rd", "educational"]
+            )
             
-            if result.get("status") == "success":
-                results = result.get("results", [])
+            if hasattr(result, "is_success") and result.is_success():
+                data = getattr(result, "data", {}) or {}
+                results = data.get("results", []) if isinstance(data, dict) else []
                 if results:
                     response = "Найденные документы:\n"
                     for i, doc in enumerate(results[:5], 1):  # Ограничить 5 результатами
@@ -717,7 +855,8 @@ class Coordinator:
                 else:
                     return "Документы не найдены"
             else:
-                return f"Ошибка поиска: {result.get('error', 'Неизвестная ошибка')}"
+                err = getattr(result, "error", None)
+                return f"Ошибка поиска: {err or 'Неизвестная ошибка'}"
         except Exception as e:
             return f"Ошибка поиска документов: {str(e)}"
     
@@ -735,12 +874,14 @@ class Coordinator:
         try:
             if file_type == "docx":
                 # Создать документ
-                result = self.tools_system.execute_tool("create_document", content)
-                if result.get("status") == "success":
-                    file_path = result.get("file_path", "")
+                result = self.tools_system.execute_tool("create_document", **content)
+                if hasattr(result, "is_success") and result.is_success():
+                    data = getattr(result, "data", {}) or {}
+                    file_path = data.get("file_path", "") if isinstance(data, dict) else str(data)
                     return f"Документ создан: {file_path}"
                 else:
-                    return f"Ошибка создания документа: {result.get('error', 'Неизвестная ошибка')}"
+                    err = getattr(result, "error", None)
+                    return f"Ошибка создания документа: {err or 'Неизвестная ошибка'}"
             else:
                 return f"Неподдерживаемый тип файла: {file_type}"
         except Exception as e:
@@ -748,16 +889,52 @@ class Coordinator:
     
     def _handle_voice_request(self, audio_data: bytes) -> str:
         """
-        Обработка голосового запроса с использованием Silero TTS для экспорта в MP3.
-        
+        Обработка голосового запроса с использованием тулзы транскрибации (Whisper)
+        и последующего анализа координатором.
+
         Args:
-            audio_data: Аудио данные
-            
+            audio_data: байты аудиофайла (ogg/opus и др.)
         Returns:
-            Результат обработки
+            Человеко-читаемый ответ с транскриптом и анализом
         """
-        # В реальной реализации здесь будет обработка голоса
-        return "Голосовой запрос обработан"
+        import tempfile, os
+        temp_audio_path = None
+        try:
+            # Save to temp file
+            fd, temp_audio_path = tempfile.mkstemp(suffix='.ogg')
+            os.close(fd)
+            with open(temp_audio_path, 'wb') as f:
+                f.write(audio_data)
+
+            # Use tools system to transcribe
+            if not getattr(self, 'tools_system', None):
+                return "🎤 Получил голосовое сообщение, но система инструментов недоступна для транскрибации."
+
+            result = self.tools_system.execute_tool("transcribe_audio", audio_path=temp_audio_path, language="ru")
+            status = result.get("status")
+            if status != "success":
+                err = result.get("error")
+                return f"🎤 Не удалось распознать речь: {err or 'ошибка транскрибации'}"
+
+            transcription = (result.get("text") or "").strip()
+            if not transcription:
+                return "🎤 Получил голосовое сообщение, но не удалось распознать текст. Попробуйте записать снова."
+
+            # Analyze transcription with coordinator
+            enhanced_prompt = (
+                "Пользователь прислал голосовое сообщение. Транскрипция: '"
+                + transcription + "'. Проанализируй запрос и дай ответ."
+            )
+            analysis = self.process_request(enhanced_prompt)
+            return f"🎤 Голосовое сообщение обработано\n\nТранскрипция: \"{transcription}\"\n\n{analysis}"
+        except Exception as e:
+            return f"🎤 Ошибка обработки голосового сообщения: {e}"
+        finally:
+            try:
+                if temp_audio_path and os.path.exists(temp_audio_path):
+                    os.remove(temp_audio_path)
+            except Exception:
+                pass
     
     def _format_plan_response(self, plan: Dict[str, Any]) -> str:
         """

@@ -19,8 +19,9 @@ const DiagnosticPanel: React.FC = () => {
   const checkAPI = async () => {
     try {
       setApiStatus('loading');
-      const health = await apiService.getHealth();
-      setSystemInfo(health);
+      // Prefer aggregated status for DB/Celery fields
+      const status = await apiService.getStatus();
+      setSystemInfo(status);
       setApiStatus('success');
     } catch (error: any) {
       setApiError(error.message || 'Unknown error');
@@ -68,13 +69,13 @@ const DiagnosticPanel: React.FC = () => {
                       <Tag color="green">{systemInfo.status}</Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Database">
-                      <Tag color={systemInfo.components?.db ? 'green' : 'red'}>
-                        {systemInfo.components?.db ? 'Connected' : 'Disconnected'}
+                      <Tag color={systemInfo.components?.db === 'connected' ? 'green' : 'red'}>
+                        {systemInfo.components?.db === 'connected' ? 'Connected' : 'Disconnected'}
                       </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="Celery">
-                      <Tag color={systemInfo.components?.celery ? 'green' : 'red'}>
-                        {systemInfo.components?.celery ? 'Running' : 'Stopped'}
+                      <Tag color={systemInfo.components?.celery === 'running' ? 'green' : 'red'}>
+                        {systemInfo.components?.celery === 'running' ? 'Running' : 'Stopped'}
                       </Tag>
                     </Descriptions.Item>
                   </Descriptions>

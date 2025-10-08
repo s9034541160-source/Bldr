@@ -1,0 +1,19 @@
+{
+  "server": "yandex-browser-mcp",
+  "version": "1.0.0",
+  "port": "3002",
+  "integration": {
+    "enabled": true,
+    "autoReport": true,
+    "reportInterval": 5000,
+    "errorAnalysis": true,
+    "performanceMonitoring": true
+  },
+  "endpoints": {
+    "error": "/cursor/error",
+    "errors": "/cursor/errors",
+    "analyze": "/cursor/analyze",
+    "status": "/cursor/status"
+  },
+  "timestamp": "2025-10-08T13:47:47.041Z"
+}

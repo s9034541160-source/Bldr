@@ -32,7 +32,7 @@ const FileManager: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      const websocket = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
+      const websocket = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
       
       websocket.onopen = () => {
         setWsStatus('Connected');

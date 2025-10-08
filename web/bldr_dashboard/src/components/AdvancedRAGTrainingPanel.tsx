@@ -36,7 +36,8 @@ import {
   Checkbox,
   DatePicker,
   List,
-  Avatar
+  Avatar,
+  Descriptions
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -286,7 +287,7 @@ const AdvancedRAGTrainingPanel: React.FC = () => {
   const connectWebSocket = () => {
     // Get token from localStorage with correct key
     const token = localStorage.getItem('auth-token');
-    const wsUrl = `ws://localhost:3001/ws${token ? `?token=${token}` : ''}`;
+    const wsUrl = `ws://localhost:8000/ws${token ? `?token=${token}` : ''}`;
     
     wsRef.current = new WebSocket(wsUrl);
     
@@ -537,8 +538,8 @@ const AdvancedRAGTrainingPanel: React.FC = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: (status) => {
-        const colors = {
+      render: (status: 'pending' | 'processing' | 'completed' | 'error') => {
+        const colors: Record<'pending' | 'processing' | 'completed' | 'error', any> = {
           pending: 'default',
           processing: 'processing',
           completed: 'success',

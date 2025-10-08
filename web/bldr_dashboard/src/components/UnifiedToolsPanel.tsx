@@ -21,7 +21,8 @@ import {
   Col,
   Tooltip,
   Badge,
-  Divider
+  Divider,
+  Drawer
 } from 'antd';
 import { 
   SearchOutlined, 
@@ -33,9 +34,23 @@ import {
   StarFilled,
   PlayCircleOutlined,
   InfoCircleOutlined,
-  HistoryOutlined
+  HistoryOutlined,
+  DollarOutlined,
+  FileTextOutlined,
+  ScheduleOutlined,
+  BarChartOutlined,
+  EyeOutlined,
+  AudioOutlined,
+  PlusOutlined,
+  CloseOutlined
 } from '@ant-design/icons';
 import { apiService } from '../services/api';
+import ToolTabsManager from './ToolTabsManager';
+import { useToolTabs } from '../contexts/ToolTabsContext';
+import { useTranslation } from '../contexts/LocalizationContext';
+import { groupToolsByCategory, getPopularTools } from '../utils/toolCategorization';
+import ToolCategorySection from './ToolCategorySection';
+import PopularToolsSection from './PopularToolsSection';
 import { 
   ToolConfigGenerateLetter,
   ToolConfigAnalyzeTender,
@@ -46,7 +61,10 @@ import {
   ToolConfigTextToSpeech
 } from './tool-configs/Configs';
 import ToolResultDisplay from './ToolResultDisplay';
+import ToolManifestEditor from './ToolManifestEditor';
+import DynamicToolForm from './DynamicToolForm';
 import ToolExecutionHistory from './ToolExecutionHistory';
+import ToolTabsManager from './ToolTabsManager';
 import ErrorBoundary from './ErrorBoundary';
 
 const { TabPane } = Tabs;
@@ -93,21 +111,51 @@ const UnifiedToolsPanel: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'history'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'history' | 'tabs'>('dashboard');
+  const t = useTranslation();
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [executingTool, setExecutingTool] = useState<string | null>(null);
   const [toolModalVisible, setToolModalVisible] = useState(false);
   const [selectedTool, setSelectedTool] = useState<ToolInfo | null>(null);
   const [toolParams, setToolParams] = useState<Record<string, any>>({});
+  const [manifestEditorOpen, setManifestEditorOpen] = useState(false);
+  const [selectedManifest, setSelectedManifest] = useState<any>(null);
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [lastResults, setLastResults] = useState<Record<string, StandardResponse>>({});
   const [showHistory, setShowHistory] = useState(false);
+  
+  // Используем глобальный контекст для боковой панели
+  const { toolTabs, tabsDrawerVisible, setTabsDrawerVisible, openToolInNewTab } = useToolTabs();
 
   // Load tools on component mount
   useEffect(() => {
     loadTools();
     loadFavorites();
+    // Subscribe to registry SSE for live updates - FIXED (auth now supports query params)
+    try {
+      const token = localStorage.getItem('auth-token') || '';
+      console.log('SSE Token:', token); // DEBUG
+      if (!token) {
+        console.warn('No token found for SSE connection');
+        return;
+      }
+      const url = `http://localhost:8000/api/tools/registry/stream?token=${encodeURIComponent(token)}`;
+      const es = new EventSource(url);
+      es.onmessage = (_ev) => {
+        // naive: just refresh list on any event
+        loadTools();
+      };
+      es.onerror = () => {};
+      return () => es.close();
+    } catch {}
   }, []);
+
+  // Автоматически показывать боковую панель, если есть вкладки
+  useEffect(() => {
+    if (toolTabs.length > 0 && !tabsDrawerVisible) {
+      setTabsDrawerVisible(true);
+    }
+  }, [toolTabs.length]);
 
   const loadTools = async () => {
     try {
@@ -192,9 +240,54 @@ const UnifiedToolsPanel: React.FC = () => {
     }
   };
 
-  const openToolModal = (tool: ToolInfo) => {
+  // openToolInNewTab теперь в глобальном контексте
+
+  const openToolModal = async (tool: ToolInfo) => {
     setSelectedTool(tool);
     setToolParams({});
+    setSelectedManifest(null); // Clear previous manifest
+    try {
+      console.log('Loading tool info for:', tool.name); // DEBUG
+      // Use new API endpoint for tool info
+      const info = await apiService.getToolInfo(tool.name);
+      console.log('Tool info response:', info); // DEBUG
+      console.log('Tool info response.data:', info.data); // DEBUG
+      console.log('Tool info response.data.parameters:', info.data?.parameters); // DEBUG
+      if (info.status === 'success' && info.data) {
+        // Convert API response to manifest format
+        console.log('Raw API data:', info.data); // DEBUG
+        console.log('Raw API data.data:', info.data.data); // DEBUG
+        
+        // !!! ИСПРАВЛЕНИЕ: Извлекаем реальные данные из двойного обертывания !!!
+        const toolData = info.data.data || info.data; // <-- ГЛАВНОЕ ИСПРАВЛЕНИЕ!
+        console.log('Extracted toolData:', toolData); // DEBUG
+        console.log('Extracted toolData.parameters:', toolData.parameters); // DEBUG
+        
+        const manifest = {
+          name: toolData.name,
+          description: toolData.description,
+          category: toolData.category,
+          params: Object.entries(toolData.parameters || {}).map(([key, param]: [string, any]) => {
+            console.log(`Mapping parameter ${key}:`, param); // DEBUG
+            return {
+              name: key,
+              type: param.type,
+              required: param.required,
+              default: param.default,
+              description: param.description,
+              ui: param.ui,
+              enum: param.enum
+            };
+          })
+        };
+        console.log('Converted manifest:', manifest); // DEBUG
+        setSelectedManifest(manifest);
+      } else {
+        console.error('Tool info failed:', info);
+      }
+    } catch (error) {
+      console.error('Error loading tool info:', error);
+    }
     setToolModalVisible(true);
   };
 
@@ -206,12 +299,26 @@ const UnifiedToolsPanel: React.FC = () => {
 
   const handleToolExecution = async () => {
     if (!selectedTool) return;
-    
     try {
-      await executeTool(selectedTool.name, toolParams);
-      closeToolModal();
+      // !!! ИСПРАВЛЕНИЕ: Используем новый API вместо старого !!!
+      const result = await apiService.executeUnifiedTool(selectedTool.name, toolParams);
+      
+      // Store result for display
+      setLastResults(prev => ({
+        ...prev,
+        [selectedTool.name]: result
+      }));
+      
+      if (result.status === 'success') {
+        message.success(`Tool ${selectedTool.name} executed successfully`);
+      } else {
+        message.error(`Tool ${selectedTool.name} failed: ${result.error}`);
+      }
+      
+      // Don't close modal immediately - let user see results
     } catch (error) {
-      // Error already handled in executeTool
+      console.error(`Error executing tool ${selectedTool.name}:`, error);
+      message.error(`Failed to execute ${selectedTool.name}`);
     }
   };
 
@@ -254,38 +361,27 @@ const UnifiedToolsPanel: React.FC = () => {
   const professionalTools = filteredTools.filter(tool => tool.ui_placement === 'tools');
   const favoriteTools = filteredTools.filter(tool => favorites.has(tool.name));
 
-  // Get categories
-  const categories = Array.from(new Set(Object.values(tools).map(tool => tool.category)));
+  // Category config (icon, color, title)
+  const TOOL_CATEGORY_CONFIG: Record<string, { icon: JSX.Element; color: string; title: string }> = {
+    financial: { icon: <DollarOutlined />, color: '#2563eb', title: 'Финансовые Инструменты' },
+    document_generation: { icon: <FileTextOutlined />, color: '#ea580c', title: 'Генерация Документов' },
+    project_management: { icon: <ScheduleOutlined />, color: '#9333ea', title: 'Управление Проектами' },
+    core_rag: { icon: <SearchOutlined />, color: '#0d9488', title: 'База Знаний (RAG)' },
+    analysis: { icon: <BarChartOutlined />, color: '#7c2d12', title: 'Анализ и Отчеты' },
+    visual: { icon: <EyeOutlined />, color: '#be123c', title: 'Визуальный Анализ' },
+    audio: { icon: <AudioOutlined />, color: '#0891b2', title: 'Аудио Анализ' },
+    utilities: { icon: <ToolOutlined />, color: '#a16207', title: 'Утилиты' },
+    service: { icon: <SettingOutlined />, color: '#6b7280', title: 'Системные' },
+  };
+
+  // Get categories (excluding service by default in UI lists)
+  const categories = Array.from(new Set(Object.values(tools).map(tool => tool.category))).filter(c => c && c !== 'service');
 
   // Category colors
-  const getCategoryColor = (category: string): string => {
-    const colors: Record<string, string> = {
-      financial: 'blue',
-      advanced_analysis: 'red',
-      document_generation: 'orange',
-      project_management: 'purple',
-      core_rag: 'green',
-      data_processing: 'gray',
-      audio: 'cyan',
-      other: 'default',
-    };
-    return colors[category] || colors.other;
-  };
+  const getCategoryColor = (category: string): string => TOOL_CATEGORY_CONFIG[category]?.color || '#999999';
 
   // Category icons
-  const getCategoryIcon = (category: string): string => {
-    const icons: Record<string, string> = {
-      financial: '💰',
-      advanced_analysis: '🧠',
-      document_generation: '📄',
-      project_management: '📅',
-      core_rag: '🔍',
-      data_processing: '⚙️',
-      audio: '🔊',
-      other: '🔧',
-    };
-    return icons[category] || icons.other;
-  };
+  const getCategoryIcon = (category: string): JSX.Element => TOOL_CATEGORY_CONFIG[category]?.icon || <ToolOutlined />;
 
   const getToolConfigComponent = (toolName: string) => {
     const map: Record<string, React.FC<any>> = {
@@ -325,14 +421,51 @@ const UnifiedToolsPanel: React.FC = () => {
         key={tool.name}
         size="small"
         hoverable
-        onClick={() => openToolModal(tool)}
+        onClick={() => openToolInNewTab(tool)}
         title={
           <Space>
-            <span>{categoryIcon}</span>
-            <span>{tool.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-            <Tag color={categoryColor}>{tool.category}</Tag>
+            <span style={{ color: categoryColor, fontSize: '16px' }}>{categoryIcon}</span>
+            <span style={{ fontWeight: 600, fontSize: '14px' }}>
+              {tool.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+            <Tag 
+              color={categoryColor}
+              style={{ 
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: 500
+              }}
+            >
+              {TOOL_CATEGORY_CONFIG[tool.category]?.title || tool.category}
+            </Tag>
           </Space>
         }
+        style={{
+          borderRadius: '12px',
+          border: '1px solid #303030',
+          background: 'linear-gradient(135deg, #1f1f1f 0%, #2a2a2a 100%)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer',
+          marginBottom: 16,
+          ':hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: '0 8px 25px rgba(0, 0, 0, 0.3)',
+            borderColor: '#1890ff'
+          }
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 8px 25px rgba(0, 0, 0, 0.3)';
+          e.currentTarget.style.borderColor = '#1890ff';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = 'none';
+          e.currentTarget.style.borderColor = '#303030';
+        }}
+        bodyStyle={{
+          padding: '16px'
+        }}
         extra={
           <Space>
             <Tooltip title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}>
@@ -348,58 +481,76 @@ const UnifiedToolsPanel: React.FC = () => {
                 type="text"
                 size="small"
                 icon={<InfoCircleOutlined />}
-                onClick={() => openToolModal(tool)}
+                onClick={() => openToolInNewTab(tool)}
               />
             </Tooltip>
           </Space>
         }
         actions={[
           <Button
-            key="quick"
+            key="open"
             type="primary"
             size="small"
             icon={<PlayCircleOutlined />}
             loading={isExecuting}
             disabled={!tool.available}
-            onClick={() => executeTool(tool.name)}
+            onClick={() => openToolInNewTab(tool)}
+            style={{ 
+              background: 'linear-gradient(135deg, #1890ff 0%, #40a9ff 100%)',
+              border: 'none',
+              boxShadow: '0 2px 8px rgba(24, 144, 255, 0.3)'
+            }}
           >
-            Quick Run
-          </Button>,
-          <Button
-            key="params"
-            size="small"
-            icon={<SettingOutlined />}
-            disabled={!tool.available}
-            onClick={() => openToolModal(tool)}
-          >
-            With Params
+            Open Tool
           </Button>
         ]}
-        style={{ marginBottom: 16 }}
       >
-        <div style={{ marginBottom: 8 }}>
-          <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ 
+            margin: 0, 
+            fontSize: '13px', 
+            color: '#bfbfbf',
+            lineHeight: '1.4',
+            marginBottom: '12px'
+          }}>
             {tool.description}
           </p>
-        </div>
-        
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space size="small">
-            <Badge 
-              status={tool.available ? 'success' : 'error'} 
-              text={tool.available ? 'Available' : 'Unavailable'} 
-            />
-            <Tag>{tool.source}</Tag>
-          </Space>
-          
-          {lastResult && (
-            <Tag 
-              color={lastResult.status === 'success' ? 'green' : 'red'}
-            >
-              {lastResult.status === 'success' ? '✅' : '❌'} 
-              {lastResult.execution_time ? `${lastResult.execution_time.toFixed(2)}s` : ''}
-            </Tag>
-          )}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            padding: '8px 12px',
+            background: 'rgba(0, 0, 0, 0.3)',
+            borderRadius: '8px',
+            border: '1px solid #303030'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ 
+                display: 'inline-block', 
+                width: '8px', 
+                height: '8px', 
+                borderRadius: '50%', 
+                backgroundColor: tool.available ? '#52c41a' : '#ff4d4f',
+                boxShadow: tool.available ? '0 0 6px rgba(82, 196, 26, 0.5)' : '0 0 6px rgba(255, 77, 79, 0.5)'
+              }} />
+              <span style={{ 
+                fontSize: '12px', 
+                color: tool.available ? '#52c41a' : '#ff4d4f',
+                fontWeight: 500
+              }}>
+                {tool.available ? 'Ready to use' : 'Unavailable'}
+              </span>
+            </div>
+            {lastResult && (
+              <span style={{ 
+                fontSize: '11px', 
+                color: '#8c8c8c',
+                fontStyle: 'italic'
+              }}>
+                Last used: {new Date(lastResult.timestamp).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
         </div>
       </Card>
     );
@@ -414,22 +565,71 @@ const UnifiedToolsPanel: React.FC = () => {
     );
   }
 
+  // Получаем все инструменты с фильтрацией
+  const allTools = Object.values(tools).filter(tool => 
+    (searchTerm === '' || tool.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+     tool.description.toLowerCase().includes(searchTerm.toLowerCase())) &&
+    (selectedCategory === 'all' || tool.category === selectedCategory)
+  );
+
+  // Группируем по категориям
+  const categorizedTools = groupToolsByCategory(allTools);
+  
+  // Получаем популярные инструменты
+  const popularTools = getPopularTools(allTools);
+
   return (
     <ErrorBoundary>
     <div>
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1>🔧 Unified Tools System</h1>
-        <p>
-          Professional construction tools with **kwargs support - {Object.keys(tools).length} tools available
+      <div style={{ 
+        marginBottom: 32,
+        textAlign: 'center',
+        background: 'linear-gradient(135deg, #1f1f1f 0%, #2a2a2a 100%)',
+        padding: '24px',
+        borderRadius: '16px',
+        border: '1px solid #303030'
+      }}>
+        <h1 style={{ 
+          margin: 0, 
+          fontSize: '28px', 
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #1890ff 0%, #40a9ff 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          marginBottom: '8px'
+        }}>
+          🔧 Professional Tools
+        </h1>
+        <p style={{ 
+          margin: 0, 
+          fontSize: '16px', 
+          color: '#bfbfbf',
+          fontWeight: 400
+        }}>
+          Advanced construction tools with intelligent parameter support
         </p>
+        <div style={{ 
+          marginTop: '16px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 16px',
+          background: 'rgba(24, 144, 255, 0.1)',
+          borderRadius: '20px',
+          border: '1px solid rgba(24, 144, 255, 0.2)'
+        }}>
+          <span style={{ color: '#1890ff', fontWeight: 600 }}>
+            {Object.keys(tools).length} tools available
+          </span>
+        </div>
       </div>
 
       {/* Controls */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={12}>
           <Input
-            placeholder="Search tools..."
+            placeholder={t('tools.searchPlaceholder')}
             prefix={<SearchOutlined />}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -442,7 +642,7 @@ const UnifiedToolsPanel: React.FC = () => {
             value={selectedCategory}
             onChange={setSelectedCategory}
           >
-            <Option value="all">All Categories</Option>
+            <Option value="all">{t('tools.allCategories')}</Option>
             {categories.map(category => (
               <Option key={category} value={category}>
                 {getCategoryIcon(category)} {category.replace('_', ' ').toUpperCase()}
@@ -458,6 +658,22 @@ const UnifiedToolsPanel: React.FC = () => {
           >
             Refresh
           </Button>
+          <Button style={{ marginLeft: 8 }} onClick={() => apiService.reloadRegistry().then(()=>{message.success('Reload requested'); loadTools();})}>Reload Registry</Button>
+          <Button style={{ marginLeft: 8 }} type="primary" onClick={async () => {
+            const name = prompt('Название нового инструмента (a-z0-9_):') || '';
+            if (!name.trim()) return;
+            try {
+              const res = await apiService.createRegistryTemplate(name.trim(), 'custom');
+              message.success('Инструмент создан');
+              await loadTools();
+              // open editor for new tool
+              const fakeTool = Object.values(tools).find(t => t.name === name.trim()) || { name: name.trim(), description: '', category: 'other', source: 'registry', ui_placement: 'tools', available: true } as any;
+              openToolInTab(fakeTool);
+              setManifestEditorOpen(true);
+            } catch (e) {
+              message.error('Не удалось создать инструмент');
+            }
+          }}>Создать инструмент</Button>
         </Col>
       </Row>
 
@@ -467,9 +683,9 @@ const UnifiedToolsPanel: React.FC = () => {
           <Card size="small">
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1890ff' }}>
-                {dashboardTools.length}
+                {allTools.length}
               </div>
-              <div>Dashboard Tools</div>
+              <div>Total Tools</div>
             </div>
           </Card>
         </Col>
@@ -477,9 +693,9 @@ const UnifiedToolsPanel: React.FC = () => {
           <Card size="small">
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#52c41a' }}>
-                {professionalTools.length}
+                {popularTools.length}
               </div>
-              <div>Professional Tools</div>
+              <div>Popular Tools</div>
             </div>
           </Card>
         </Col>
@@ -497,7 +713,7 @@ const UnifiedToolsPanel: React.FC = () => {
           <Card size="small">
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#722ed1' }}>
-                {categories.length}
+                {categorizedTools.length}
               </div>
               <div>Categories</div>
             </div>
@@ -550,21 +766,27 @@ const UnifiedToolsPanel: React.FC = () => {
           )}
           
           <h3>🎯 High-Impact Daily Tools</h3>
-          {dashboardTools.length === 0 ? (
+          {allTools.length === 0 ? (
             <Alert
-              message="No dashboard tools found"
+              message="No tools found"
               description="Try adjusting your search or filter criteria."
               type="info"
               showIcon
             />
           ) : (
-            <Row gutter={[16, 16]}>
-              {dashboardTools.map(tool => (
-                <Col key={tool.name} xs={24} sm={12} md={8} lg={6}>
-                  {renderToolCard(tool)}
-                </Col>
+            <>
+              <PopularToolsSection 
+                popularTools={popularTools}
+                renderToolCard={renderToolCard}
+              />
+              {categorizedTools.map(categoryGroup => (
+                <ToolCategorySection
+                  key={categoryGroup.category.id}
+                  categorizedTools={categoryGroup}
+                  renderToolCard={renderToolCard}
+                />
               ))}
-            </Row>
+            </>
           )}
         </TabPane>
 
@@ -578,21 +800,23 @@ const UnifiedToolsPanel: React.FC = () => {
           key="tools"
         >
           <h3>🔧 Specialized Professional Tools</h3>
-          {professionalTools.length === 0 ? (
+          {allTools.length === 0 ? (
             <Alert
-              message="No professional tools found"
+              message="No tools found"
               description="Try adjusting your search or filter criteria."
               type="info"
               showIcon
             />
           ) : (
-            <Row gutter={[16, 16]}>
-              {professionalTools.map(tool => (
-                <Col key={tool.name} xs={24} sm={12} md={8} lg={6}>
-                  {renderToolCard(tool)}
-                </Col>
+            <>
+              {categorizedTools.map(categoryGroup => (
+                <ToolCategorySection
+                  key={categoryGroup.category.id}
+                  categorizedTools={categoryGroup}
+                  renderToolCard={renderToolCard}
+                />
               ))}
-            </Row>
+            </>
           )}
         </TabPane>
 
@@ -607,6 +831,52 @@ const UnifiedToolsPanel: React.FC = () => {
         >
           <ToolExecutionHistory />
         </TabPane>
+
+        <TabPane 
+          tab={
+            <span>
+              <ToolOutlined />
+              Tool Tabs
+              {toolTabs.length > 0 && <Badge count={toolTabs.length} style={{ marginLeft: 8 }} />}
+              {tabsDrawerVisible && <span style={{ marginLeft: 8, color: '#52c41a' }}>●</span>}
+            </span>
+          } 
+          key="tabs"
+        >
+          <div style={{ marginBottom: 16 }}>
+            <Button 
+              type="primary" 
+              icon={tabsDrawerVisible ? <CloseOutlined /> : <ToolOutlined />}
+              onClick={() => setTabsDrawerVisible(!tabsDrawerVisible)}
+            >
+              {tabsDrawerVisible ? 'Hide Tool Tabs' : 'Show Tool Tabs'}
+            </Button>
+            <span style={{ marginLeft: 16, color: '#666' }}>
+              Управление вкладками инструментов
+            </span>
+          </div>
+          
+          {toolTabs.length > 0 && (
+            <div>
+              <h4>Активные вкладки ({toolTabs.length})</h4>
+              <Row gutter={[16, 16]}>
+                {toolTabs.map((tab, index) => (
+                  <Col key={tab.id} xs={24} sm={12} md={8}>
+                    <Card size="small" title={tab.tool.name}>
+                      <p>{tab.tool.description}</p>
+                      <Button 
+                        size="small" 
+                        onClick={() => setTabsDrawerVisible(true)}
+                      >
+                        Открыть
+                      </Button>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            </div>
+          )}
+        </TabPane>
       </Tabs>
 
       {/* Show history overlay when button is clicked */}
@@ -618,6 +888,7 @@ const UnifiedToolsPanel: React.FC = () => {
 
       {/* Tool Execution Modal */}
       <Modal
+        key={selectedTool?.name || 'no-tool'} // !!! ПРИНУДИТЕЛЬНЫЙ РЕСЕТ КОМПОНЕНТА !!!
         title={selectedTool ? `Execute: ${selectedTool.name}` : 'Execute Tool'}
         open={toolModalVisible}
         onCancel={closeToolModal}
@@ -625,6 +896,7 @@ const UnifiedToolsPanel: React.FC = () => {
           <Button key="cancel" onClick={closeToolModal}>
             Cancel
           </Button>,
+          <Button key="editm" onClick={() => setManifestEditorOpen(true)}>Редактировать манифест</Button>,
           <Button
             key="execute"
             type="primary"
@@ -646,37 +918,16 @@ const UnifiedToolsPanel: React.FC = () => {
 
             <Divider />
 
-            {/* Per-tool configuration */}
-            {(() => {
-              const Cmp = getToolConfigComponent(selectedTool.name);
-              if (Cmp) {
-                return <Cmp value={toolParams} onChange={setToolParams} />;
-              }
-              return (
-                <>
-                  <h4>Parameters (**kwargs)</h4>
-                  <div style={{ marginBottom: 16 }}>
-                    <Button onClick={addParameter} size="small">+ Add Parameter</Button>
-                  </div>
-                  {Object.keys(toolParams).length === 0 ? (
-                    <p style={{ color: '#666', fontStyle: 'italic' }}>
-                      No parameters set. Click "Add Parameter" to add **kwargs.
-                    </p>
-                  ) : (
-                    <div>
-                      {Object.entries(toolParams).map(([key, value]) => (
-                        <div key={key} style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-                          <Input style={{ width: '30%' }} value={key} readOnly size="small" />
-                          <Input style={{ flex: 1 }} value={value as any}
-                            onChange={(e) => updateParameter(key, (e.target as any).value)} placeholder="Value" size="small" />
-                          <Button size="small" danger onClick={() => removeParameter(key)}>❌</Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              );
-            })()}
+            {/* Dynamic form from manifest.params */}
+            {selectedManifest && (
+              <>
+                {/* DEBUG: Log selectedManifest */}
+                {console.log('[UnifiedToolsPanel] selectedManifest:', selectedManifest)}
+                {console.log('[UnifiedToolsPanel] selectedManifest.params:', selectedManifest.params)}
+                {console.log('[UnifiedToolsPanel] selectedManifest.params count:', selectedManifest.params?.length || 0)}
+                <DynamicToolForm params={selectedManifest.params || []} value={toolParams} onChange={setToolParams} />
+              </>
+            )}
 
             {/* Presets */}
             <Divider />
@@ -708,20 +959,48 @@ const UnifiedToolsPanel: React.FC = () => {
               <>
                 <Divider />
                 <h4>Last Result</h4>
-                <Alert
-                  message={lastResults[selectedTool.name].status === 'success' ? 'Success' : 'Error'}
-                  description={
-                    lastResults[selectedTool.name].error || 
-                    `Executed successfully in ${lastResults[selectedTool.name].execution_time?.toFixed(3)}s`
-                  }
-                  type={lastResults[selectedTool.name].status === 'success' ? 'success' : 'error'}
-                  showIcon
+                <ToolResultDisplay 
+                  result={lastResults[selectedTool.name]} 
+                  toolName={selectedTool.name}
                 />
               </>
             )}
           </div>
         )}
       </Modal>
+
+      {/* Боковая панель теперь глобальная в App.tsx */}
+
+      {/* Manifest Editor */}
+      {selectedTool && selectedManifest && (
+        <ToolManifestEditor
+          open={manifestEditorOpen}
+          manifest={{
+            name: selectedTool.name,
+            title: selectedManifest.title || selectedTool.name,
+            description: selectedManifest.description || selectedTool.description,
+            category: selectedManifest.category || selectedTool.category,
+            ui_placement: selectedManifest.ui_placement || 'tools',
+            enabled: selectedManifest.enabled !== false,
+            system: selectedManifest.system || false,
+            params: selectedManifest.params || []
+          }}
+          onCancel={() => setManifestEditorOpen(false)}
+          onSave={async (patch) => {
+            try {
+              await apiService.updateRegistryManifest(selectedTool.name, patch);
+              message.success('Манифест обновлён');
+              setManifestEditorOpen(false);
+              // refresh details
+              const info = await apiService.getRegistryToolInfo(selectedTool.name);
+              setSelectedManifest(info?.manifest || null);
+              loadTools();
+            } catch (e) {
+              message.error('Ошибка обновления манифеста');
+            }
+          }}
+        />
+      )}
     </div>
     </ErrorBoundary>
   );

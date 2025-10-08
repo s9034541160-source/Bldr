@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cursor MCP Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 10px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #005a9e;
+        }
+        .log {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Cursor MCP Integration Test</h1>
+    
+    <div class="test-section">
+        <h3>📡 Проверка подключения к Cursor MCP</h3>
+        <button onclick="testConnection()">Проверить подключение</button>
+        <div id="connectionResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>🚨 Тест отправки ошибок в Cursor</h3>
+        <button onclick="sendTestError()">Отправить тестовую ошибку</button>
+        <button onclick="sendJavaScriptError()">JavaScript ошибка</button>
+        <button onclick="sendNetworkError()">Сетевая ошибка</button>
+    </div>
+    
+    <div class="test-section">
+        <h3>📊 Лог событий</h3>
+        <div class="log" id="eventLog">Готов к тестированию...\n</div>
+        <button onclick="clearLog()">Очистить лог</button>
+    </div>
+
+    <script>
+        let logEntries = [];
+        
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = `[${timestamp}] ${message}`;
+            logEntries.push(entry);
+            
+            const logElement = document.getElementById('eventLog');
+            logElement.textContent = logEntries.slice(-20).join('\n');
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+        
+        function testConnection() {
+            log('🔍 Проверка подключения к Cursor MCP...');
+            
+            fetch('http://localhost:3002/cursor/status')
+                .then(response => {
+                    if (response.ok) {
+                        log('✅ Cursor MCP сервер доступен!');
+                        document.getElementById('connectionResult').innerHTML = 
+                            '<div style="color: green;">✅ Подключено к Cursor MCP</div>';
+                    } else {
+                        log('❌ Сервер недоступен');
+                        document.getElementById('connectionResult').innerHTML = 
+                            '<div style="color: red;">❌ Сервер недоступен</div>';
+                    }
+                })
+                .catch(error => {
+                    log('❌ Ошибка подключения: ' + error.message);
+                    document.getElementById('connectionResult').innerHTML = 
+                        '<div style="color: red;">❌ Ошибка подключения</div>';
+                });
+        }
+        
+        function sendTestError() {
+            log('📤 Отправка тестовой ошибки в Cursor...');
+            
+            const errorData = {
+                type: 'Test Error',
+                message: 'Тестовая ошибка для проверки Cursor MCP интеграции',
+                url: window.location.href,
+                timestamp: new Date().toISOString(),
+                severity: 'medium',
+                source: 'test-page'
+            };
+            
+            fetch('http://localhost:3002/cursor/error', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(errorData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                log('✅ Ошибка успешно отправлена в Cursor MCP!');
+                log('📋 Ответ сервера: ' + JSON.stringify(data));
+            })
+            .catch(error => {
+                log('❌ Ошибка отправки: ' + error.message);
+            });
+        }
+        
+        function sendJavaScriptError() {
+            log('🧪 Генерация JavaScript ошибки...');
+            
+            try {
+                // Намеренно вызываем ошибку
+                undefinedVariable.someMethod();
+            } catch (error) {
+                log('✅ JavaScript ошибка захвачена: ' + error.message);
+                
+                const errorData = {
+                    type: 'JavaScript Error',
+                    message: error.message,
+                    stack: error.stack,
+                    url: window.location.href,
+                    timestamp: new Date().toISOString(),
+                    severity: 'high'
+                };
+                
+                fetch('http://localhost:3002/cursor/error', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(errorData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    log('✅ JavaScript ошибка отправлена в Cursor!');
+                })
+                .catch(err => {
+                    log('❌ Ошибка отправки JS ошибки: ' + err.message);
+                });
+            }
+        }
+        
+        function sendNetworkError() {
+            log('🌐 Тестирование сетевой ошибки...');
+            
+            fetch('http://localhost:3002/nonexistent-endpoint')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                })
+                .catch(error => {
+                    log('✅ Сетевая ошибка захвачена: ' + error.message);
+                    
+                    const errorData = {
+                        type: 'Network Error',
+                        message: error.message,
+                        url: window.location.href,
+                        timestamp: new Date().toISOString(),
+                        severity: 'medium'
+                    };
+                    
+                    fetch('http://localhost:3002/cursor/error', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(errorData)
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        log('✅ Сетевая ошибка отправлена в Cursor!');
+                    })
+                    .catch(err => {
+                        log('❌ Ошибка отправки сетевой ошибки: ' + err.message);
+                    });
+                });
+        }
+        
+        function clearLog() {
+            logEntries = [];
+            document.getElementById('eventLog').textContent = 'Лог очищен...\n';
+        }
+        
+        // Глобальные обработчики ошибок
+        window.addEventListener('error', (event) => {
+            log('🔍 Глобальная ошибка: ' + event.message);
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+            log('🔍 Unhandled Promise: ' + event.reason);
+        });
+        
+        // Инициализация
+        log('🚀 Cursor MCP тестовая страница загружена');
+        log('📍 URL: ' + window.location.href);
+    </script>
+</body>
+</html>
+

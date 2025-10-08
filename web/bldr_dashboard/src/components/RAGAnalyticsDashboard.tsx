@@ -43,8 +43,6 @@ import {
   DatabaseOutlined,
   FileTextOutlined,
   ClockCircleOutlined,
-  MemoryOutlined,
-  ProcessorOutlined,
   CloudOutlined,
   SearchOutlined,
   FilterOutlined,
@@ -54,10 +52,7 @@ import {
   CheckCircleOutlined,
   InfoCircleOutlined,
   RocketOutlined,
-  TargetOutlined,
-  FundOutlined,
   RadarChartOutlined,
-  HeatMapOutlined,
   DotChartOutlined
 } from '@ant-design/icons';
 import { Line, Bar, Pie, Gauge, Heatmap, Scatter, Area, Column } from '@ant-design/plots';
@@ -505,12 +500,13 @@ const RAGAnalyticsDashboard: React.FC = () => {
               value={refreshInterval}
               onChange={setRefreshInterval}
               style={{ width: 100 }}
-            >
-              <Option value={10}>10s</Option>
-              <Option value={30}>30s</Option>
-              <Option value={60}>1m</Option>
-              <Option value={300}>5m</Option>
-            </Select>
+              options={[
+                { value: 10, label: '10s' },
+                { value: 30, label: '30s' },
+                { value: 60, label: '1m' },
+                { value: 300, label: '5m' }
+              ]}
+            />
             <RangePicker 
               onChange={(dates) => setTimeRange(dates ? [dates[0]!.toISOString(), dates[1]!.toISOString()] : null)}
             />
@@ -577,7 +573,7 @@ const RAGAnalyticsDashboard: React.FC = () => {
                       value={(performanceMetrics?.memoryEfficiency || 0) * 100}
                       precision={1}
                       suffix="%"
-                      prefix={<MemoryOutlined />}
+                      prefix={<CloudOutlined />}
                     />
                   </Col>
                   <Col span={6}>
@@ -586,7 +582,8 @@ const RAGAnalyticsDashboard: React.FC = () => {
                       value={(performanceMetrics?.cpuUtilization || 0) * 100}
                       precision={1}
                       suffix="%"
-                      prefix={<ProcessorOutlined />}
+                      // ProcessorOutlined is removed, so this line is commented out
+                      // prefix={<ProcessorOutlined />} 
                     />
                   </Col>
                   <Col span={6}>
@@ -856,7 +853,7 @@ const RAGAnalyticsDashboard: React.FC = () => {
         </TabPane>
 
         {/* Optimization Tab */}
-        <TabPane tab={<span><TargetOutlined />Optimization</span>} key="optimization">
+        <TabPane tab={<span><RocketOutlined />Optimization</span>} key="optimization">
           <Row gutter={16}>
             <Col span={8}>
               <Card title="Performance Optimizations">

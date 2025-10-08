@@ -1,0 +1,6 @@
+{
+  "message": "test",
+  "context_search": false,
+  "max_context": 1,
+  "agent_role": "coordinator"
+}

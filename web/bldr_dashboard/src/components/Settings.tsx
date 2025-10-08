@@ -20,21 +20,129 @@ import { useStore } from '../store';
 import { apiService } from '../services/api';
 import UnifiedToolsSettings from './UnifiedToolsSettings';
 import UserManagement from './UserManagement';
+import AutoTestPanel from './AutoTestPanel';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
 const { Text, Title } = Typography;
 const { Panel } = Collapse;
 
+const { TextArea } = Input;
+
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [testResult, setTestResult] = useState('');
   const { settings, setSettings, theme, setTheme, user } = useStore();
   const [resetLoading, setResetLoading] = useState(false);
-  
+
+  // Coordinator settings state
+  const [coordLoading, setCoordLoading] = useState(false);
+  const [coordSettings, setCoordSettings] = useState<any>(null);
+
+  // Prompts/Rules state
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string>('coordinator');
+  const [promptContent, setPromptContent] = useState<string>('');
+  const [promptMeta, setPromptMeta] = useState<{ source?: string; updated_at?: string | null }>({});
+  const [rulesContent, setRulesContent] = useState<string>('');
+  const [rulesMeta, setRulesMeta] = useState<{ source?: string; updated_at?: string | null }>({});
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [savingRules, setSavingRules] = useState(false);
+
+  // Role→Model assignment state
+  const [rmLoading, setRmLoading] = useState(false);
+  const [rmRoles, setRmRoles] = useState<any[]>([]);
+  const [rmModels, setRmModels] = useState<any[]>([]);
+  const [rmAssignments, setRmAssignments] = useState<any>({});
+  const [rmLocal, setRmLocal] = useState<Record<string, { model?: string }>>({});
+
   useEffect(() => {
     form.setFieldsValue(settings);
   }, [settings, form]);
+
+  useEffect(() => {
+    // Load coordinator settings
+    (async () => {
+      try {
+        setCoordLoading(true);
+        const data = await apiService.getCoordinatorSettings();
+        setCoordSettings(data);
+      } catch (e) {
+        // ignore
+      } finally {
+        setCoordLoading(false);
+      }
+    })();
+  }, []);
+
+  const loadPromptsAndRules = async () => {
+    try {
+      setPromptsLoading(true);
+      const list = await apiService.listPrompts();
+      setRoles(list);
+      // Ensure selected role exists
+      const current = (list.find((r: any) => r.role === selectedRole) || list[0]);
+      const roleKey = current?.role || 'coordinator';
+      setSelectedRole(roleKey);
+      const p = await apiService.getPrompt(roleKey);
+      setPromptContent(p.content || '');
+      setPromptMeta({ source: p.source, updated_at: p.updated_at });
+      const r = await apiService.getFactualRules();
+      setRulesContent(r.content || '');
+      setRulesMeta({ source: r.source, updated_at: r.updated_at });
+    } catch (e) {
+      message.error('Не удалось загрузить промпты/правила');
+    } finally {
+      setPromptsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPromptsAndRules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load Role↔Model data
+  useEffect(() => {
+    (async () => {
+      try {
+        setRmLoading(true);
+        const [rolesRes, modelsRes, mappingRes] = await Promise.all([
+          apiService.listRoles(),
+          apiService.listAvailableModels(),
+          apiService.getRoleModels()
+        ]);
+        setRmRoles(rolesRes || []);
+        setRmModels(modelsRes?.models || []);
+        setRmAssignments(mappingRes?.roles || {});
+        const localInit: Record<string, { model?: string }> = {};
+        (rolesRes || []).forEach((r: any) => {
+          const eff = mappingRes?.roles?.[r.role]?.effective;
+          if (eff?.model) localInit[r.role] = { model: eff.model };
+        });
+        setRmLocal(localInit);
+      } catch (e) {
+        // ignore
+      } finally {
+        setRmLoading(false);
+      }
+    })();
+  }, []);
+
+  const onChangeRole = async (roleKey: string) => {
+    setSelectedRole(roleKey);
+    try {
+      setPromptsLoading(true);
+      const p = await apiService.getPrompt(roleKey);
+      setPromptContent(p.content || '');
+      setPromptMeta({ source: p.source, updated_at: p.updated_at });
+    } catch (e) {
+      message.error('Не удалось загрузить промпт роли');
+    } finally {
+      setPromptsLoading(false);
+    }
+  };
   
   const resetDatabases = async () => {
     Modal.confirm({
@@ -84,6 +192,72 @@ const Settings: React.FC = () => {
     message.info('Сброшено на дефолт');
   };
   
+  const saveCoordinator = async () => {
+    try {
+      setCoordLoading(true);
+      await apiService.updateCoordinatorSettings(coordSettings);
+      message.success('Настройки координатора сохранены');
+    } catch (e) {
+      message.error('Ошибка сохранения');
+    } finally {
+      setCoordLoading(false);
+    }
+  };
+
+  const savePrompt = async () => {
+    try {
+      setSavingPrompt(true);
+      const p = await apiService.updatePrompt(selectedRole, promptContent);
+      setPromptMeta({ source: p.source, updated_at: p.updated_at });
+      message.success('Промпт сохранён');
+    } catch (e) {
+      message.error('Ошибка сохранения промпта');
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const resetPrompt = async () => {
+    try {
+      setSavingPrompt(true);
+      const p = await apiService.resetPrompt(selectedRole);
+      setPromptContent(p.content || '');
+      setPromptMeta({ source: p.source, updated_at: p.updated_at });
+      message.success('Промпт сброшен к дефолту');
+    } catch (e) {
+      message.error('Ошибка сброса промпта');
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const saveRules = async () => {
+    try {
+      setSavingRules(true);
+      const r = await apiService.updateFactualRules(rulesContent);
+      setRulesMeta({ source: r.source, updated_at: r.updated_at });
+      message.success('Правила сохранены');
+    } catch (e) {
+      message.error('Ошибка сохранения правил');
+    } finally {
+      setSavingRules(false);
+    }
+  };
+
+  const resetRules = async () => {
+    try {
+      setSavingRules(true);
+      const r = await apiService.resetFactualRules();
+      setRulesContent(r.content || '');
+      setRulesMeta({ source: r.source, updated_at: r.updated_at });
+      message.success('Правила сброшены к дефолту');
+    } catch (e) {
+      message.error('Ошибка сброса правил');
+    } finally {
+      setSavingRules(false);
+    }
+  };
+
   return (
     <Tabs defaultActiveKey="api">
       <TabPane tab="API/DB" key="api">
@@ -240,6 +414,46 @@ const Settings: React.FC = () => {
         </Form>
       </TabPane>
       
+      <TabPane tab="Координатор" key="coordinator">
+        <Card title="Настройки Координатора (backend)" style={{ marginBottom: 24 }}>
+          <Text type="secondary">
+            Управление логикой планирования и выполнения: количество итераций, быстрый путь, генерация артефактов и авто-увеличение сложности.
+          </Text>
+        </Card>
+        {coordLoading && <Spin />}
+        {!coordLoading && coordSettings && (
+          <Form layout="vertical" onFinish={saveCoordinator}>
+            <Form.Item label="Планирование включено">
+              <Switch checked={!!coordSettings.planning_enabled} onChange={(v) => setCoordSettings({ ...coordSettings, planning_enabled: v })} />
+            </Form.Item>
+            <Form.Item label="JSON-планы (включены)">
+              <Switch checked={!!coordSettings.json_mode_enabled} onChange={(v) => setCoordSettings({ ...coordSettings, json_mode_enabled: v })} />
+            </Form.Item>
+            <Form.Item label="Макс. итераций">
+              <InputNumber min={1} max={10} value={coordSettings.max_iterations} onChange={(v) => setCoordSettings({ ...coordSettings, max_iterations: v })} />
+            </Form.Item>
+            <Form.Item label="Быстрый путь для простых планов">
+              <Switch checked={!!coordSettings.simple_plan_fast_path} onChange={(v) => setCoordSettings({ ...coordSettings, simple_plan_fast_path: v })} />
+            </Form.Item>
+            <Form.Item label="Артефакты по умолчанию">
+              <Switch checked={!!coordSettings.artifact_default_enabled} onChange={(v) => setCoordSettings({ ...coordSettings, artifact_default_enabled: v })} />
+            </Form.Item>
+            <Form.Item label="Авто-увеличение сложности">
+              <Switch checked={!!coordSettings.complexity_auto_expand} onChange={(v) => setCoordSettings({ ...coordSettings, complexity_auto_expand: v })} />
+            </Form.Item>
+            <Form.Item label="Порог сложности: кол-во инструментов">
+              <InputNumber min={1} max={10} value={coordSettings?.complexity_thresholds?.tools_count} onChange={(v) => setCoordSettings({ ...coordSettings, complexity_thresholds: { ...coordSettings.complexity_thresholds, tools_count: v } })} />
+            </Form.Item>
+            <Form.Item label="Порог сложности: время (мин)">
+              <InputNumber min={1} max={120} value={coordSettings?.complexity_thresholds?.time_est_minutes} onChange={(v) => setCoordSettings({ ...coordSettings, complexity_thresholds: { ...coordSettings.complexity_thresholds, time_est_minutes: v } })} />
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit">Сохранить</Button>
+            </Form.Item>
+          </Form>
+        )}
+      </TabPane>
+      
       <TabPane tab="LLM" key="llm">
         <Card title="Настройки языковой модели (LLM)" style={{ marginBottom: 24 }}>
           <Text type="secondary">
@@ -377,6 +591,291 @@ const Settings: React.FC = () => {
             </Button>
           </Form.Item>
         </Form>
+      </TabPane>
+      
+      <TabPane tab="Модели" key="role-models">
+        <Card title="Назначение моделей для ролей" style={{ marginBottom: 16 }}>
+          <Text type="secondary">Быстро переключайте, какая модель отвечает за каждую роль. Изменения применяются немедленно.</Text>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button
+              onClick={async () => {
+                try {
+                  await apiService.clearModelCache(true);
+                  message.success('Кеш моделей очищен (кроме координатора)');
+                } catch (e) {
+                  message.error('Не удалось очистить кеш');
+                }
+              }}
+            >Очистить кеш (кроме координатора)</Button>
+            <Button
+              danger
+              onClick={async () => {
+                try {
+                  await apiService.clearModelCache(false);
+                  message.success('Полный кеш моделей очищен');
+                } catch (e) {
+                  message.error('Не удалось полностью очистить кеш');
+                }
+              }}
+            >Полная очистка кеша</Button>
+            <Button
+              type="primary"
+              onClick={async () => {
+                try {
+                  const payload: Record<string, any> = {};
+                  Object.keys(rmLocal || {}).forEach((roleKey) => {
+                    const rml = rmLocal[roleKey] || {};
+                    if (!rml.model && !rml.base_url && rml.temperature == null && rml.max_tokens == null) return;
+                    payload[roleKey] = {} as any;
+                    if (rml.model) payload[roleKey].model = rml.model;
+                    if (rml.base_url) payload[roleKey].base_url = rml.base_url;
+                    if (typeof rml.temperature === 'number') payload[roleKey].temperature = rml.temperature;
+                    if (typeof rml.max_tokens === 'number') payload[roleKey].max_tokens = rml.max_tokens;
+                  });
+                  if (Object.keys(payload).length === 0) {
+                    message.info('Нет изменений для сохранения');
+                    return;
+                  }
+                  await apiService.updateRoleModels(payload);
+                  const mappingRes = await apiService.getRoleModels();
+                  setRmAssignments(mappingRes?.roles || {});
+                  message.success('Изменения сохранены для всех ролей');
+                } catch (e) {
+                  message.error('Не удалось сохранить изменения по ролям');
+                }
+              }}
+            >Сохранить всё</Button>
+            <Button
+              onClick={async () => {
+                try {
+                  const data = await apiService.getFullSettingsJson();
+                  Modal.info({
+                    title: 'settings.json',
+                    width: 900,
+                    content: (
+                      <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 500, overflow: 'auto', background: '#fafafa', padding: 12 }}>
+                        {JSON.stringify(data, null, 2)}
+                      </pre>
+                    )
+                  });
+                } catch (e) {
+                  message.error('Не удалось открыть settings.json');
+                }
+              }}
+            >Открыть settings.json</Button>
+            <Button
+              onClick={async () => {
+                try {
+                  await apiService.openSettingsInEditor();
+                  message.success('Открываю settings.json в редакторе');
+                } catch (e) {
+                  message.error('Не удалось открыть settings.json');
+                }
+              }}
+            >Открыть settings.json в редакторе</Button>
+          </div>
+        </Card>
+        {rmLoading && <Spin />}
+        {!rmLoading && (
+          <div>
+            {(rmRoles || []).map((r: any) => {
+              const roleKey = r.role;
+              const eff = rmAssignments?.[roleKey]?.effective || {};
+              const def = rmAssignments?.[roleKey]?.default || {};
+              const ov = rmAssignments?.[roleKey]?.override || {};
+              const currentModel = rmLocal?.[roleKey]?.model || eff?.model;
+              return (
+                <Card key={roleKey} size="small" style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220 }}>
+                      <Title level={5} style={{ margin: 0 }}>{r.title || roleKey}</Title>
+                      <Text type="secondary">Текущая: {eff?.model} @ {eff?.base_url}</Text>
+                    </div>
+                    <div>
+                      <Select
+                        style={{ minWidth: 360 }}
+                        value={currentModel}
+                        onChange={(val) => setRmLocal({ ...rmLocal, [roleKey]: { model: val } })}
+                        showSearch
+                        optionFilterProp="children"
+                        placeholder="Выберите модель"
+                      >
+                        {(rmModels || []).map((m: any) => (
+                          <Option key={`${m.id}@${m.base_url}`} value={m.id}>{m.label} — {m.id}</Option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div style={{ width: '100%' }}>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+                        <Input
+                          style={{ minWidth: 320 }}
+                          placeholder="base_url"
+                          value={rmLocal?.[roleKey]?.base_url ?? eff?.base_url}
+                          onChange={(e) => setRmLocal({ ...rmLocal, [roleKey]: { ...rmLocal[roleKey], base_url: e.target.value } })}
+                        />
+                        <InputNumber
+                          style={{ width: 160 }}
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          placeholder="temperature"
+                          value={typeof rmLocal?.[roleKey]?.temperature === 'number' ? rmLocal?.[roleKey]?.temperature : eff?.temperature}
+                          onChange={(v) => setRmLocal({ ...rmLocal, [roleKey]: { ...rmLocal[roleKey], temperature: v as number } })}
+                        />
+                        <InputNumber
+                          style={{ width: 180 }}
+                          min={256}
+                          max={32768}
+                          step={128}
+                          placeholder="max_tokens"
+                          value={typeof rmLocal?.[roleKey]?.max_tokens === 'number' ? rmLocal?.[roleKey]?.max_tokens : eff?.max_tokens}
+                          onChange={(v) => setRmLocal({ ...rmLocal, [roleKey]: { ...rmLocal[roleKey], max_tokens: v as number } })}
+                        />
+                      </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <Button
+                          onClick={async () => {
+                            try {
+                              const preview = await apiService.previewPrompt(roleKey);
+                              Modal.info({
+                                title: `Предпросмотр промпта — ${r.title || roleKey}`,
+                                width: 900,
+                                content: (
+                                  <div>
+                                    <div style={{ marginBottom: 8 }}>
+                                      <Text type="secondary">Модель: {preview?.effective_model?.model} @ {preview?.effective_model?.base_url}</Text>
+                                    </div>
+                                    <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 500, overflow: 'auto', background: '#fafafa', padding: 12 }}>{String(preview?.prompt || '')}</pre>
+                                  </div>
+                                ),
+                              });
+                            } catch (e) {
+                              message.error('Не удалось получить предпросмотр');
+                            }
+                          }}
+                        >
+                          Предпросмотр промпта
+                        </Button>
+                        <Button
+                          type="default"
+                          onClick={async () => {
+                            try {
+                              const res = await apiService.reloadCoordinator();
+                              if (res?.reloaded) message.success('Координатор перезагружен'); else message.warning('Не удалось перезагрузить координатора');
+                            } catch (e) {
+                              message.error('Ошибка перезагрузки координатора');
+                            }
+                          }}
+                        >
+                          Перезагрузить координатора
+                        </Button>
+                        <Button
+                          type="primary"
+                          onClick={async () => {
+                          try {
+                            const selected = (rmModels || []).find((m: any) => m.id === (rmLocal?.[roleKey]?.model || eff?.model));
+                            const payload: any = { [roleKey]: { model: (rmLocal?.[roleKey]?.model || eff?.model) } };
+                            const base_url = rmLocal?.[roleKey]?.base_url ?? selected?.base_url ?? eff?.base_url;
+                            const temp = (typeof rmLocal?.[roleKey]?.temperature === 'number') ? rmLocal?.[roleKey]?.temperature : (selected?.temperature ?? eff?.temperature);
+                            const max_toks = (typeof rmLocal?.[roleKey]?.max_tokens === 'number') ? rmLocal?.[roleKey]?.max_tokens : (selected?.max_tokens ?? eff?.max_tokens);
+                            if (base_url) payload[roleKey].base_url = base_url;
+                            if (temp != null) payload[roleKey].temperature = temp;
+                            if (max_toks != null) payload[roleKey].max_tokens = max_toks;
+                            await apiService.updateRoleModels(payload);
+                            const mappingRes = await apiService.getRoleModels();
+                            setRmAssignments(mappingRes?.roles || {});
+                            message.success('Модель для роли сохранена');
+                          } catch (e) {
+                            message.error('Не удалось сохранить модель для роли');
+                          }
+                        }}
+                      >
+                        Сохранить
+                      </Button>
+                      <Button
+                        onClick={async () => {
+                          try {
+                            await apiService.resetRoleModel(roleKey);
+                            const mappingRes = await apiService.getRoleModels();
+                            setRmAssignments(mappingRes?.roles || {});
+                            setRmLocal((prev) => ({ ...prev, [roleKey]: { model: mappingRes?.roles?.[roleKey]?.default?.model } }));
+                            message.success('Сброшено к дефолту');
+                          } catch (e) {
+                            message.error('Не удалось сбросить модель');
+                          }
+                        }}
+                      >
+                        Сбросить
+                      </Button>
+                    </div>
+                  </div>
+                  {ov && Object.keys(ov).length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="secondary">Переопределение активно: {JSON.stringify(ov)}</Text>
+                    </div>
+                  )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </TabPane>
+      
+      <TabPane tab="Промпты/Правила" key="prompts">
+        <Card title="Редактор промптов ролей (Markdown)" style={{ marginBottom: 24 }}>
+          <Text type="secondary">
+            Выберите роль, отредактируйте её системный промпт и сохраните. Можно сбросить к встроенному дефолту из backend.
+          </Text>
+        </Card>
+        <Form layout="vertical" onFinish={(e) => e?.preventDefault?.()}>
+          <Form.Item label="Роль">
+            <Select value={selectedRole} onChange={onChangeRole} style={{ maxWidth: 360 }} loading={promptsLoading}>
+              {roles.map((r: any) => (
+                <Option key={r.role} value={r.role}>{r.title || r.role} {r.source === 'active' ? '• (изменён)' : ''}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item label={<span>Промпт роли <Text type="secondary">({promptMeta?.source === 'active' ? 'переопределён' : 'дефолт'})</Text></span>}>
+            <TextArea rows={16} value={promptContent} onChange={(e: any) => setPromptContent(e.target.value)} placeholder="# Заголовок\n...markdown..." />
+            {promptMeta?.updated_at && (
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary">Изменено: {new Date(promptMeta.updated_at).toLocaleString()}</Text>
+              </div>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <Button type="primary" onClick={savePrompt} loading={savingPrompt}>Сохранить промпт</Button>
+              <Button onClick={resetPrompt} danger style={{ marginLeft: 12 }} loading={savingPrompt}>Сбросить</Button>
+            </div>
+          </Form.Item>
+        </Form>
+
+        <Divider />
+
+        <Card title="Правила фактической точности (Markdown)" style={{ marginBottom: 16 }}>
+          <Text type="secondary">Эти правила будут автоматически добавлены к промптам (если вы зададите их здесь).</Text>
+        </Card>
+        <Form layout="vertical">
+          <Form.Item label={<span>Текст правил <Text type="secondary">({rulesMeta?.source === 'active' ? 'переопределены' : 'дефолт'})</Text></span>}>
+            <TextArea rows={12} value={rulesContent} onChange={(e: any) => setRulesContent(e.target.value)} placeholder={"# ПРАВИЛА..."} />
+            {rulesMeta?.updated_at && (
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary">Изменено: {new Date(rulesMeta.updated_at).toLocaleString()}</Text>
+              </div>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <Button type="primary" onClick={saveRules} loading={savingRules}>Сохранить правила</Button>
+              <Button onClick={resetRules} danger style={{ marginLeft: 12 }} loading={savingRules}>Сбросить</Button>
+            </div>
+          </Form.Item>
+        </Form>
+      </TabPane>
+      
+      <TabPane tab="Авто-тест" key="autotest">
+        <Card title="Быстрое авто-тестирование (3 варианта)" style={{ marginBottom: 16 }}>
+          <Text type="secondary">Выберите до 3 вариантов настроек и запустите автотест. Система применит настройки последовательно и выполнит набор запросов.</Text>
+        </Card>
+        <AutoTestPanel />
       </TabPane>
       
       <TabPane tab="UI" key="ui">

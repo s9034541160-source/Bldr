@@ -1,0 +1,527 @@
+# namespace:financial
+from typing import Any, Dict, List
+import time
+from core.tools.base_tool import ToolManifest, ToolInterface, ToolParam, ToolParamType
+
+# Импортируем улучшенный парсер бюджета
+try:
+    from core.enhanced_budget_parser import calculate_budget_from_estimate, create_budget_template
+    HAS_ENHANCED_BUDGET = True
+except ImportError:
+    HAS_ENHANCED_BUDGET = False
+
+# Создаем Pydantic модели для универсального представления
+coordinator_interface = ToolInterface(
+    purpose='Профессиональный расчет бюджета строительного проекта с учетом всех факторов: материалов, работ, накладных расходов, прибыли, налогов и рисков',
+    input_requirements={
+        'project_name': ToolParam(
+            name='project_name',
+            type=ToolParamType.STRING,
+            required=True,
+            description='Название проекта'
+        ),
+        'base_cost': ToolParam(
+            name='base_cost',
+            type=ToolParamType.NUMBER,
+            required=True,
+            description='Базовая стоимость материалов и работ'
+        )
+    },
+    execution_flow=[
+        'Валидация входных параметров',
+        'Расчет базовых компонентов',
+        'Учет факторов риска и инфляции',
+        'Расчет налогов',
+        'Формирование итоговой суммы',
+        'Создание детализации по статьям',
+        'Генерация рекомендаций',
+        'Возврат финансового отчета'
+    ],
+    output_format={
+        'status': 'success|error',
+        'data': {
+            'total_budget': 'float',
+            'breakdown': 'object',
+            'recommendations': 'array',
+            'metadata': 'object'
+        }
+    },
+    usage_guidelines={
+        'for_coordinator': [
+            'Используйте для расчета бюджетов строительных проектов',
+            'Передавайте точные данные о базовой стоимости',
+            'Указывайте тип проекта для применения правильных коэффициентов'
+        ],
+        'for_models': [
+            'Инструмент возвращает полный финансовый отчет',
+            'Используйте breakdown для детального анализа затрат',
+            'Следуйте рекомендациям для оптимизации бюджета'
+        ]
+    }
+)
+
+manifest = ToolManifest(
+    name='auto_budget',
+    version='1.0.0',
+    title='💰 Автоматический расчет бюджета',
+    description='Профессиональный расчет бюджета строительного проекта с учетом всех факторов: материалов, работ, накладных расходов, прибыли, налогов и рисков.',
+    category='financial',
+    ui_placement='dashboard',
+    enabled=True,
+    system=False,
+    entrypoint='tools.custom.auto_budget:execute',
+    params=[
+        ToolParam(
+            name='project_name',
+            type=ToolParamType.STRING,
+            required=True,
+            description='Название проекта',
+            ui={
+                'placeholder': 'Введите название проекта...',
+                'maxLength': 200
+            }
+        ),
+        ToolParam(
+            name='base_cost',
+            type=ToolParamType.NUMBER,
+            required=True,
+            description='Базовая стоимость (материалы + работы)',
+            ui={
+                'min': 1000,
+                'max': 100000000,
+                'step': 1000,
+                'currency': 'RUB'
+            }
+        ),
+        ToolParam(
+            name='project_type',
+            type=ToolParamType.ENUM,
+            required=False,
+            default='residential',
+            description='Тип проекта',
+            enum=[
+                {'value': 'residential', 'label': 'Жилой дом'},
+                {'value': 'commercial', 'label': 'Коммерческое здание'},
+                {'value': 'industrial', 'label': 'Промышленный объект'},
+                {'value': 'infrastructure', 'label': 'Инфраструктура'},
+                {'value': 'renovation', 'label': 'Реконструкция'},
+                {'value': 'repair', 'label': 'Ремонт'}
+            ]
+        ),
+        ToolParam(
+            name='profit_margin',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=0.15,
+            description='Норма прибыли (0.0-1.0)',
+            ui={
+                'min': 0.0,
+                'max': 1.0,
+                'step': 0.01,
+                'slider': True
+            }
+        ),
+        ToolParam(
+            name='overhead_rate',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=0.20,
+            description='Накладные расходы (0.0-1.0)',
+            ui={
+                'min': 0.0,
+                'max': 1.0,
+                'step': 0.01,
+                'slider': True
+            }
+        ),
+        ToolParam(
+            name='tax_rate',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=0.20,
+            description='Налоговая ставка (0.0-1.0)',
+            ui={
+                'min': 0.0,
+                'max': 1.0,
+                'step': 0.01,
+                'slider': True
+            }
+        ),
+        ToolParam(
+            name='risk_factor',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=0.05,
+            description='Фактор риска (0.0-0.5)',
+            ui={
+                'min': 0.0,
+                'max': 0.5,
+                'step': 0.01,
+                'slider': True
+            }
+        ),
+        ToolParam(
+            name='inflation_rate',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=0.08,
+            description='Уровень инфляции (0.0-1.0)',
+            ui={
+                'min': 0.0,
+                'max': 1.0,
+                'step': 0.01,
+                'slider': True
+            }
+        ),
+        ToolParam(
+            name='project_duration',
+            type=ToolParamType.NUMBER,
+            required=False,
+            default=12,
+            description='Длительность проекта (месяцы)',
+            ui={
+                'min': 1,
+                'max': 60,
+                'step': 1
+            }
+        ),
+        ToolParam(
+            name='include_breakdown',
+            type=ToolParamType.BOOLEAN,
+            required=False,
+            default=True,
+            description='Включить детализацию по статьям',
+            ui={
+                'switch': True
+            }
+        ),
+        ToolParam(
+            name='currency',
+            type=ToolParamType.ENUM,
+            required=False,
+            default='RUB',
+            description='Валюта расчета',
+            enum=[
+                {'value': 'RUB', 'label': 'Рубли (₽)'},
+                {'value': 'USD', 'label': 'Доллары ($)'},
+                {'value': 'EUR', 'label': 'Евро (€)'}
+            ]
+        )
+    ],
+    outputs=['budget', 'total_cost', 'breakdown', 'recommendations'],
+    result_display={
+        'type': 'financial_report',
+        'title': 'Финансовый отчет проекта',
+        'description': 'Детальный расчет бюджета с анализом и рекомендациями',
+        'features': {
+            'exportable': True,
+            'printable': True,
+            'interactive': True,
+            'charts': True
+        }
+    },
+    permissions=['filesystem:write', 'network:out'],
+    tags=['budget', 'finance', 'construction', 'planning', 'enterprise'],
+    documentation={
+        'examples': [
+            {
+                'title': 'Жилой дом',
+                'project_name': 'Строительство коттеджа',
+                'base_cost': 5000000,
+                'project_type': 'residential',
+                'profit_margin': 0.15
+            },
+            {
+                'title': 'Коммерческое здание',
+                'project_name': 'Офисный центр',
+                'base_cost': 15000000,
+                'project_type': 'commercial',
+                'profit_margin': 0.20
+            }
+        ],
+        'tips': [
+            'Учитывайте региональные особенности при расчете',
+            'Закладывайте резерв на непредвиденные расходы',
+            'Регулярно пересматривайте бюджет в процессе строительства'
+        ]
+    },
+    coordinator_interface=coordinator_interface
+)
+
+def execute(**kwargs) -> Dict[str, Any]:
+    """Execute enterprise-level budget calculation with advanced financial analysis."""
+    start_time = time.time()
+    
+    try:
+        # Validate and parse parameters
+        project_name = kwargs.get('project_name', '').strip()
+        if not project_name:
+            return {
+                'status': 'error',
+                'error': 'Название проекта не может быть пустым',
+                'execution_time': time.time() - start_time
+            }
+        
+        base_cost = kwargs.get('base_cost', 0)
+        if base_cost <= 0:
+            return {
+                'status': 'error',
+                'error': 'Базовая стоимость должна быть больше 0',
+                'execution_time': time.time() - start_time
+            }
+        
+        # Parse parameters with defaults
+        project_type = kwargs.get('project_type', 'residential')
+        profit_margin = max(0.0, min(1.0, kwargs.get('profit_margin', 0.15)))
+        overhead_rate = max(0.0, min(1.0, kwargs.get('overhead_rate', 0.20)))
+        tax_rate = max(0.0, min(1.0, kwargs.get('tax_rate', 0.20)))
+        risk_factor = max(0.0, min(0.5, kwargs.get('risk_factor', 0.05)))
+        inflation_rate = max(0.0, min(1.0, kwargs.get('inflation_rate', 0.08)))
+        project_duration = max(1, min(60, kwargs.get('project_duration', 12)))
+        include_breakdown = kwargs.get('include_breakdown', True)
+        currency = kwargs.get('currency', 'RUB')
+        
+        # Calculate comprehensive budget using enhanced parser if available
+        if HAS_ENHANCED_BUDGET:
+            # Создаем данные сметы для улучшенного парсера
+            estimate_data = {
+                'total_cost': base_cost,
+                'project_name': project_name,
+                'project_type': project_type
+            }
+            
+            # Используем улучшенный расчет бюджета
+            enhanced_result = calculate_budget_from_estimate(estimate_data)
+            
+            if enhanced_result.get('status') == 'success':
+                total_expenses = enhanced_result.get('total_expenses', 0)
+                net_profit = enhanced_result.get('net_profit', 0)
+                total_cost = base_cost  # Общая стоимость = базовая стоимость
+                
+                budget_calculation = {
+                    'base_cost': base_cost,
+                    'total_cost': total_cost,
+                    'net_profit': net_profit,
+                    'profit_margin': enhanced_result.get('profit_margin', 0),
+                    'budget_items': enhanced_result.get('budget_items', {}),
+                    'enhanced_calculation': True,
+                    # Добавляем недостающие поля для совместимости
+                    'overhead_cost': 0,
+                    'profit_cost': 0,
+                    'risk_cost': 0,
+                    'inflation_cost': 0,
+                    'tax_cost': 0,
+                    'subtotal': total_cost,
+                    'breakdown_percentages': {
+                        'base': 100.0,
+                        'overhead': 0.0,
+                        'profit': 0.0,
+                        'risk': 0.0,
+                        'inflation': 0.0,
+                        'tax': 0.0
+                    },
+                    'currency_symbol': '₽'
+                }
+            else:
+                # Fallback to original calculation
+                budget_calculation = _calculate_comprehensive_budget(
+                    base_cost, project_type, profit_margin, overhead_rate, 
+                    tax_rate, risk_factor, inflation_rate, project_duration, currency
+                )
+        else:
+            # Original calculation
+            budget_calculation = _calculate_comprehensive_budget(
+                base_cost, project_type, profit_margin, overhead_rate, 
+                tax_rate, risk_factor, inflation_rate, project_duration, currency
+            )
+        
+        # Generate recommendations
+        recommendations = _generate_budget_recommendations(
+            budget_calculation, project_type, project_duration
+        )
+        
+        # Create detailed breakdown table
+        table_data = _create_budget_breakdown_table(budget_calculation, currency)
+        
+        # Generate metadata
+        metadata = {
+            'project_name': project_name,
+            'project_type': project_type,
+            'base_cost': base_cost,
+            'total_cost': budget_calculation['total_cost'],
+            'profit_margin': profit_margin,
+            'overhead_rate': overhead_rate,
+            'tax_rate': tax_rate,
+            'risk_factor': risk_factor,
+            'inflation_rate': inflation_rate,
+            'project_duration': project_duration,
+            'currency': currency,
+            'calculated_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'recommendations': recommendations
+        }
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            'status': 'success',
+            'data': {
+                'budget': budget_calculation,
+                'total_cost': budget_calculation['total_cost'],
+                'breakdown': table_data,
+                'recommendations': recommendations,
+                'metadata': metadata
+            },
+            'execution_time': execution_time,
+            'result_type': 'financial_report',
+            'result_title': f'💰 Бюджет проекта: {project_name}',
+            'result_table': table_data,
+            'metadata': metadata
+        }
+        
+    except Exception as e:
+        return { 
+            'status': 'error', 
+            'error': str(e),
+            'execution_time': time.time() - start_time
+        }
+
+
+def _calculate_comprehensive_budget(base_cost: float, project_type: str, profit_margin: float,
+                                  overhead_rate: float, tax_rate: float, risk_factor: float,
+                                  inflation_rate: float, project_duration: int, currency: str) -> Dict[str, Any]:
+    """Calculate comprehensive budget with all factors."""
+    
+    # Base calculations
+    overhead_cost = base_cost * overhead_rate
+    profit_cost = base_cost * profit_margin
+    
+    # Risk and inflation adjustments
+    risk_cost = base_cost * risk_factor
+    inflation_cost = base_cost * inflation_rate * (project_duration / 12)
+    
+    # Subtotal before taxes
+    subtotal = base_cost + overhead_cost + profit_cost + risk_cost + inflation_cost
+    
+    # Tax calculation
+    tax_cost = subtotal * tax_rate
+    
+    # Total cost
+    total_cost = subtotal + tax_cost
+    
+    # Currency formatting
+    currency_symbol = {'RUB': '₽', 'USD': '$', 'EUR': '€'}.get(currency, '₽')
+    
+    return {
+        'base_cost': base_cost,
+        'overhead_cost': overhead_cost,
+        'profit_cost': profit_cost,
+        'risk_cost': risk_cost,
+        'inflation_cost': inflation_cost,
+        'tax_cost': tax_cost,
+        'subtotal': subtotal,
+        'total_cost': total_cost,
+        'currency_symbol': currency_symbol,
+        'breakdown_percentages': {
+            'base': (base_cost / total_cost) * 100,
+            'overhead': (overhead_cost / total_cost) * 100,
+            'profit': (profit_cost / total_cost) * 100,
+            'risk': (risk_cost / total_cost) * 100,
+            'inflation': (inflation_cost / total_cost) * 100,
+            'tax': (tax_cost / total_cost) * 100
+        }
+    }
+
+
+def _create_budget_breakdown_table(budget_calculation: Dict[str, Any], currency: str) -> List[Dict[str, Any]]:
+    """Create detailed budget breakdown table."""
+    symbol = budget_calculation['currency_symbol']
+    
+    table_data = [
+        {
+            'item': 'Базовая стоимость',
+            'amount': f"{budget_calculation['base_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['base']:.1f}%",
+            'category': 'Основные затраты'
+        },
+        {
+            'item': 'Накладные расходы',
+            'amount': f"{budget_calculation['overhead_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['overhead']:.1f}%",
+            'category': 'Управление'
+        },
+        {
+            'item': 'Прибыль',
+            'amount': f"{budget_calculation['profit_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['profit']:.1f}%",
+            'category': 'Доходность'
+        },
+        {
+            'item': 'Резерв на риски',
+            'amount': f"{budget_calculation['risk_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['risk']:.1f}%",
+            'category': 'Риски'
+        },
+        {
+            'item': 'Инфляционная корректировка',
+            'amount': f"{budget_calculation['inflation_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['inflation']:.1f}%",
+            'category': 'Инфляция'
+        },
+        {
+            'item': 'Налоги',
+            'amount': f"{budget_calculation['tax_cost']:,.2f} {symbol}",
+            'percentage': f"{budget_calculation['breakdown_percentages']['tax']:.1f}%",
+            'category': 'Налогообложение'
+        },
+        {
+            'item': 'ИТОГО',
+            'amount': f"{budget_calculation['total_cost']:,.2f} {symbol}",
+            'percentage': '100.0%',
+            'category': 'Общая сумма'
+        }
+    ]
+    
+    return table_data
+
+
+def _generate_budget_recommendations(budget_calculation: Dict[str, Any], 
+                                   project_type: str, project_duration: int) -> List[str]:
+    """Generate budget recommendations based on analysis."""
+    recommendations = []
+    
+    total_cost = budget_calculation['total_cost']
+    base_cost = budget_calculation['base_cost']
+    overhead_rate = budget_calculation['breakdown_percentages']['overhead']
+    profit_rate = budget_calculation['breakdown_percentages']['profit']
+    
+    # Overhead analysis
+    if overhead_rate > 25:
+        recommendations.append("⚠️ Высокие накладные расходы (>25%). Рассмотрите оптимизацию управления.")
+    elif overhead_rate < 15:
+        recommendations.append("✅ Накладные расходы в норме. Хорошая эффективность управления.")
+    
+    # Profit analysis
+    if profit_rate > 20:
+        recommendations.append("💰 Высокая норма прибыли. Проект может быть привлекательным для инвесторов.")
+    elif profit_rate < 10:
+        recommendations.append("⚠️ Низкая норма прибыли. Рассмотрите повышение эффективности.")
+    
+    # Project type specific recommendations
+    if project_type == 'residential':
+        recommendations.append("🏠 Для жилых проектов рекомендуется заложить резерв 10-15% на непредвиденные расходы.")
+    elif project_type == 'commercial':
+        recommendations.append("🏢 Коммерческие проекты требуют тщательного планирования сроков и бюджета.")
+    elif project_type == 'industrial':
+        recommendations.append("🏭 Промышленные объекты требуют дополнительного учета экологических требований.")
+    
+    # Duration analysis
+    if project_duration > 24:
+        recommendations.append("⏰ Длительные проекты требуют регулярного пересмотра бюджета с учетом инфляции.")
+    
+    # Cost analysis
+    if total_cost > base_cost * 2:
+        recommendations.append("📊 Общая стоимость значительно превышает базовую. Проверьте расчеты.")
+    
+    return recommendations
+
+

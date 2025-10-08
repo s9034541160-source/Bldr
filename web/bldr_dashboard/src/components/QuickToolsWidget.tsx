@@ -25,6 +25,8 @@ import {
   StarFilled
 } from '@ant-design/icons';
 import { apiService, unwrap } from '../services/api';
+import { useToolTabs } from '../contexts/ToolTabsContext';
+import { useTranslation } from '../contexts/LocalizationContext';
 
 interface QuickTool {
   name: string;
@@ -45,6 +47,10 @@ const QuickToolsWidget: React.FC<QuickToolsWidgetProps> = ({
 }) => {
   const [executing, setExecuting] = useState<string | null>(null);
   const [toolStats, setToolStats] = useState<Record<string, number>>({});
+  const t = useTranslation();
+  
+  // Используем глобальный контекст для Tool Tabs
+  const { openToolInNewTab } = useToolTabs();
 
   // Predefined quick tools with icons and colors
   const quickTools: QuickTool[] = [
@@ -121,8 +127,18 @@ const QuickToolsWidget: React.FC<QuickToolsWidgetProps> = ({
     try {
       setExecuting(toolName);
       
-      // Execute tool with default parameters
-      const result = await apiService.executeUnifiedTool(toolName, {});
+      // !!! НОВАЯ ЛОГИКА: Добавляем инструмент в Tool Tab вместо прямого выполнения !!!
+      const toolInfo = {
+        name: toolName,
+        category: 'quick_tools',
+        description: `Quick access to ${toolName}`,
+        ui_placement: 'dashboard' as const,
+        available: true,
+        source: 'quick_tools'
+      };
+      
+      // Открываем инструмент в новой вкладке Tool Tab
+      await openToolInNewTab(toolInfo);
       
       // Update usage statistics
       updateToolStats(toolName);
@@ -132,15 +148,10 @@ const QuickToolsWidget: React.FC<QuickToolsWidgetProps> = ({
         onToolExecute(toolName);
       }
 
-      const { ok, error } = unwrap<any>(result);
-      if (ok) {
-        message.success(`${toolName} executed successfully`);
-      } else {
-        message.error(`${toolName} failed: ${String(error)}`);
-      }
+      message.success(`${toolName} opened in Tool Tab`);
     } catch (error) {
-      console.error(`Error executing ${toolName}:`, error);
-      message.error(`Failed to execute ${toolName}`);
+      console.error(`Error opening ${toolName} in Tool Tab:`, error);
+      message.error(`Failed to open ${toolName} in Tool Tab`);
     } finally {
       setExecuting(null);
     }

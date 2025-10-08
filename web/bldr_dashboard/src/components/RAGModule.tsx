@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Button, Input, Tabs, Progress, Spin } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Button, Input, Tabs, Progress, Spin, Alert } from 'antd';
 import { 
   FileTextOutlined, 
   DatabaseOutlined, 
@@ -99,7 +99,7 @@ const RAGModule: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      const websocket = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
+      const websocket = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
 
       websocket.onopen = () => {
         setStatus('Connected');
@@ -164,6 +164,8 @@ const RAGModule: React.FC = () => {
       setMetrics(data);
     } catch (error) {
       console.error('Failed to fetch metrics:', error);
+      // !!! ЧЕСТНАЯ ОШИБКА: НЕ ПОКАЗЫВАЕМ ФЕЙКОВЫЕ ДАННЫЕ !!!
+      setMetrics(null);
     } finally {
       setLoadingMetrics(false);
     }
@@ -177,6 +179,8 @@ const RAGModule: React.FC = () => {
       setNormsSummary(data);
     } catch (error) {
       console.error('Failed to fetch norms summary:', error);
+      // !!! ЧЕСТНАЯ ОШИБКА: НЕ ПОКАЗЫВАЕМ ФЕЙКОВЫЕ ДАННЫЕ !!!
+      setNormsSummary(null);
     } finally {
       setLoadingSummary(false);
     }
@@ -198,6 +202,9 @@ const RAGModule: React.FC = () => {
       });
     } catch (error) {
       console.error('Failed to fetch trained documents:', error);
+      // !!! ЧЕСТНАЯ ОШИБКА: НЕ ПОКАЗЫВАЕМ ФЕЙКОВЫЕ ДАННЫЕ !!!
+      setTrainedDocs([]);
+      setDocsPagination({ page: 1, limit: 10, total: 0 });
     } finally {
       setLoadingDocs(false);
     }
@@ -319,6 +326,39 @@ const RAGModule: React.FC = () => {
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
         {/* Dashboard Tab */}
         <TabPane tab={<span><BarChartOutlined />Dashboard</span>} key="dashboard">
+          {/* Честные ошибки вместо моковых данных */}
+          {!metrics && !loadingMetrics && (
+            <div style={{ marginBottom: '24px' }}>
+              <Alert
+                message="Метрики RAG недоступны"
+                description="Не удалось загрузить метрики RAG системы. API методы getMetrics() не реализованы или недоступны."
+                type="error"
+                showIcon
+                action={
+                  <Button size="small" onClick={fetchMetrics}>
+                    Повторить попытку
+                  </Button>
+                }
+              />
+            </div>
+          )}
+          
+          {!normsSummary && !loadingSummary && (
+            <div style={{ marginBottom: '24px' }}>
+              <Alert
+                message="Сводка по нормам недоступна"
+                description="Не удалось загрузить сводку по нормам. API методы getNormsSummary() не реализованы или недоступны."
+                type="error"
+                showIcon
+                action={
+                  <Button size="small" onClick={fetchNormsSummary}>
+                    Повторить попытку
+                  </Button>
+                }
+              />
+            </div>
+          )}
+
           <Row gutter={16} style={{ marginBottom: '24px' }}>
             <Col span={6}>
               <Card>

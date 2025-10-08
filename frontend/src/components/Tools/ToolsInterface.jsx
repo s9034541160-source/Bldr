@@ -25,7 +25,8 @@ import {
   Security as SecurityIcon,
   Engineering as EngineeringIcon,
   Settings as SettingsIcon,
-  Notifications as NotificationsIcon
+  Notifications as NotificationsIcon,
+  AccountBalance as BudgetIcon
 } from '@mui/icons-material';
 
 // Import specialized tool components
@@ -39,6 +40,7 @@ import LetterGenerator from './LetterGenerator';
 import BIMAnalyzer from './BIMAnalyzer';
 import FinancialAnalyzer from './FinancialAnalyzer';
 import ComplianceChecker from './ComplianceChecker';
+import AutoBudget from './AutoBudget';
 
 const ToolsInterface = () => {
   const [selectedTab, setSelectedTab] = useState(0);
@@ -56,6 +58,14 @@ const ToolsInterface = () => {
       description: 'Загрузка и анализ сметной документации',
       component: EstimateAnalyzer,
       color: '#2196F3'
+    },
+    {
+      id: 'budget',
+      name: 'Автобюджет',
+      icon: <BudgetIcon />,
+      description: 'Автоматический расчет строительного бюджета',
+      component: AutoBudget,
+      color: '#4CAF50'
     },
     {
       id: 'documents',

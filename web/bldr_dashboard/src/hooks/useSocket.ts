@@ -32,12 +32,9 @@ export const useSocket = () => {
     if (!user?.token) {
       return;
     }
-
-    const base = getApiBase();
-    const proto = base.startsWith('https') ? 'wss' : 'ws';
-    const trimmed = base.replace(/\/$/, '');
-    // Use the proxy path /ws instead of constructing a full URL
-    const wsUrl = '/ws';
+    
+    // HARDCODE: Force connection to backend port 8000
+    const wsUrl = `ws://localhost:8000/ws`;
 
     const connect = () => {
       try {

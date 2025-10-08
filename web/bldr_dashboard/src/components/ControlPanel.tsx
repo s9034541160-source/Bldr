@@ -57,7 +57,7 @@ const ControlPanel: React.FC = () => {
 
   const handleTrain = async () => {
     if (trainDir) {
-      await handleAction('train', () => apiService.train({ base_dir: trainDir }), 'Обучение запущено');
+      await handleAction('train', () => apiService.train({}), 'Обучение запущено');
     } else {
       await handleAction('train', () => apiService.train(), 'Обучение запущено');
     }

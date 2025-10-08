@@ -1,0 +1,45 @@
+{
+  "server": {
+    "name": "Yandex Browser MCP Server",
+    "version": "1.0.0",
+    "port": 3000,
+    "browserType": "yandex",
+    "host": "localhost"
+  },
+  "errorCapture": {
+    "enabled": true,
+    "logLevel": "error",
+    "maxLogSize": "10MB",
+    "retentionDays": 30,
+    "autoCleanup": true
+  },
+  "cursor": {
+    "integration": true,
+    "autoReport": true,
+    "reportInterval": 5000,
+    "apiEndpoint": "http://localhost:8080/api/mcp"
+  },
+  "yandex": {
+    "browserPath": "C:\\Users\\%USERNAME%\\AppData\\Local\\Yandex\\YandexBrowser\\Application\\browser.exe",
+    "profilePath": "C:\\Users\\%USERNAME%\\AppData\\Local\\Yandex\\YandexBrowser\\User Data",
+    "extensions": {
+      "enabled": true,
+      "errorCapture": true,
+      "performanceMonitoring": true
+    }
+  },
+  "logging": {
+    "level": "info",
+    "file": "logs/mcp-server.log",
+    "maxSize": "50MB",
+    "maxFiles": 5
+  },
+  "security": {
+    "allowedOrigins": ["http://localhost:3000", "http://localhost:8080"],
+    "apiKey": "mcp-yandex-browser-key-2024",
+    "rateLimit": {
+      "windowMs": 60000,
+      "max": 100
+    }
+  }
+}

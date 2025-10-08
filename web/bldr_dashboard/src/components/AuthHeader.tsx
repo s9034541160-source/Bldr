@@ -3,14 +3,43 @@ import { Layout, Button, Modal, Form, Input, message, Switch, Avatar, Dropdown }
 import { UserOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { apiService } from '../services/api';
+import { useToolTabs } from '../contexts/ToolTabsContext';
+import { useTranslation } from '../contexts/LocalizationContext';
+import LanguageSwitcher from './LanguageSwitcher';
 import StatusPills from './StatusPills';
 
 const { Header } = Layout;
+
+// Function to refresh token
+const refreshToken = async () => {
+  try {
+    const response = await fetch('/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'username=admin&password=admin123'  // Default credentials
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return { success: true, token: data.access_token };
+    } else {
+      return { success: false, error: 'Failed to refresh token' };
+    }
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
 
 const AuthHeader: React.FC = () => {
   const [showLogin, setShowLogin] = useState(false);
   const [loading, setLoading] = useState(false);
   const { user, theme, setTheme, setUser, clearUser } = useStore();
+  const t = useTranslation();
+  
+  // Используем глобальный контекст для Tool Tabs
+  const { openToolInNewTab } = useToolTabs();
   
   // Check if authentication is disabled
   useEffect(() => {
@@ -65,8 +94,35 @@ const AuthHeader: React.FC = () => {
             const exp = payload.exp;
             const now = Math.floor(Date.now() / 1000);
             
-            if (exp && now >= exp) {
-              // Token expired, remove it
+            // Check if token expires in the next 5 minutes or is already expired
+            if (exp && (now >= exp || (exp - now) < 300)) {
+              // Token expired or expiring soon, try to refresh it automatically
+              console.log('Token expired or expiring soon, attempting to refresh...');
+              try {
+                const refreshResult = await refreshToken();
+                if (refreshResult.success) {
+                  console.log('Token refreshed successfully');
+                  // Continue with the new token
+                  const newToken = refreshResult.token;
+                  localStorage.setItem('auth-token', newToken);
+                  // Re-parse the new token
+                  const newPayload = JSON.parse(atob(newToken.split('.')[1]));
+                  const username = userData?.username || newPayload.sub || 'user';
+                  const role = userData?.role || newPayload.role || (username === 'admin' ? 'admin' : 'user');
+                  
+                  setUser({
+                    username,
+                    role,
+                    isAuthenticated: true,
+                    token: newToken
+                  });
+                  return;
+                }
+              } catch (error) {
+                console.log('Token refresh failed:', error);
+              }
+              
+              // If refresh failed, remove expired token
               localStorage.removeItem('auth-token');
               localStorage.removeItem('auth-user');
               return;
@@ -108,7 +164,7 @@ const AuthHeader: React.FC = () => {
   // Check token expiration periodically
   useEffect(() => {
     if (user && user.token !== "disabled_auth_token") {
-      const checkTokenExpiration = () => {
+      const checkTokenExpiration = async () => {
         try {
           // Only check JWT tokens, not mock tokens
           if (user.token && user.token.includes('.') && user.token !== "disabled_auth_token") {
@@ -116,7 +172,25 @@ const AuthHeader: React.FC = () => {
             const exp = payload.exp;
             const now = Math.floor(Date.now() / 1000);
             
-            if (exp && now >= exp) {
+            // Check if token expires in the next 5 minutes or is already expired
+            if (exp && (now >= exp || (exp - now) < 300)) {
+              // Try to refresh token first
+              try {
+                const refreshResult = await refreshToken();
+                if (refreshResult.success) {
+                  console.log('Token refreshed successfully in useEffect');
+                  // Update user with new token
+                  setUser({
+                    ...user,
+                    token: refreshResult.token
+                  });
+                  return;
+                }
+              } catch (error) {
+                  console.log('Token refresh failed in useEffect:', error);
+                }
+              
+              // If refresh failed, clear user
               clearUser();
               message.warning('Сессия истекла — перелогиньтесь');
             }
@@ -128,10 +202,12 @@ const AuthHeader: React.FC = () => {
       };
       
       // Check immediately
-      checkTokenExpiration();
+      checkTokenExpiration().catch(console.error);
       
       // Check every minute
-      const interval = setInterval(checkTokenExpiration, 60000);
+      const interval = setInterval(() => {
+        checkTokenExpiration().catch(console.error);
+      }, 60000);
       
       return () => clearInterval(interval);
     }
@@ -234,6 +310,41 @@ const AuthHeader: React.FC = () => {
     console.log('User logged out and localStorage cleared');
   };
   
+  // Обработчик глобального поиска инструментов
+  const handleGlobalSearch = async (query: string) => {
+    if (!query.trim()) return;
+    
+    try {
+      // Ищем инструмент по названию
+      const response = await apiService.get(`/api/tools/discovery?search=${encodeURIComponent(query)}`);
+      
+      if (response.status === 'success' && response.data?.tools) {
+        const tools = response.data.tools;
+        const exactMatch = tools.find((tool: any) => 
+          tool.name.toLowerCase() === query.toLowerCase()
+        );
+        const partialMatch = tools.find((tool: any) => 
+          tool.name.toLowerCase().includes(query.toLowerCase())
+        );
+        
+        const targetTool = exactMatch || partialMatch;
+        
+        if (targetTool) {
+          // Открываем найденный инструмент в Tool Tab
+          await openToolInNewTab(targetTool);
+          message.success(`Инструмент "${targetTool.name}" открыт в Tool Tab`);
+        } else {
+          message.warning(`Инструмент "${query}" не найден`);
+        }
+      } else {
+        message.warning(`Инструмент "${query}" не найден`);
+      }
+    } catch (error) {
+      console.error('Error searching for tool:', error);
+      message.error('Ошибка поиска инструмента');
+    }
+  };
+  
   const menuItems = [
     { key: 'profile', label: <>Роль: {user?.role}</> },
     { key: 'logout', label: 'Выход' },
@@ -247,8 +358,15 @@ const AuthHeader: React.FC = () => {
       background: theme === 'dark' ? '#141414' : '#ffffff'
     }}>
       <Input.Search 
-        placeholder="Глобальный поиск..." 
-        style={{ width: 200, marginRight: 16 }} 
+        placeholder={t('navigation.search')} 
+        style={{ width: 200, marginRight: 16 }}
+        onSearch={handleGlobalSearch}
+        enterButton
+      />
+      
+      <LanguageSwitcher 
+        size="small" 
+        style={{ marginRight: 16 }} 
       />
       
       {user ? (

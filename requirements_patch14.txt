@@ -1,0 +1,7 @@
+# Updated dependencies for Patch 14
+langchain==0.1.0
+sentence-transformers==2.2.2
+peft==0.6.0
+pydantic==2.0
+python-dotenv==1.0
+scikit-learn>=1.0.0

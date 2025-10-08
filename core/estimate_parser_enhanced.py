@@ -1,5 +1,6 @@
 """
 Enhanced estimate parser for GESN/FER rates
+Интегрирует улучшения из I:\нейросетки\стройтэк\прога
 """
 
 import json
@@ -15,6 +16,13 @@ try:
 except ImportError:
     HAS_PANDAS = False
     pd = None
+
+# Импортируем улучшенный парсер
+try:
+    from core.enhanced_smeta_parser import parse_estimate_enhanced
+    HAS_ENHANCED_PARSER = True
+except ImportError:
+    HAS_ENHANCED_PARSER = False
 
 def parse_estimate_gesn(estimate_file: str, region: str = 'ekaterinburg') -> Dict[str, Any]:
     """
@@ -44,17 +52,19 @@ def parse_estimate_gesn(estimate_file: str, region: str = 'ekaterinburg') -> Dic
     # Try to parse actual file if it exists
     if os.path.exists(estimate_file):
         try:
-            # Try to parse as Excel file first
-            if estimate_file.endswith('.xlsx') or estimate_file.endswith('.xls'):
-                estimate_data["positions"] = parse_excel_estimate(estimate_file)
-            # Try to parse as CSV file
-            elif estimate_file.endswith('.csv'):
-                estimate_data["positions"] = parse_csv_estimate(estimate_file)
-            # Try to parse as text file
+            # Используем улучшенный парсер если доступен
+            if HAS_ENHANCED_PARSER:
+                enhanced_result = parse_estimate_enhanced(estimate_file)
+                if enhanced_result.get('positions'):
+                    estimate_data["positions"] = enhanced_result["positions"]
+                    estimate_data["format"] = enhanced_result.get('format', 'unknown')
+                    estimate_data["positions_count"] = enhanced_result.get('positions_count', 0)
+                else:
+                    # Fallback to original parser
+                    estimate_data["positions"] = _parse_with_original_method(estimate_file)
             else:
-                with open(estimate_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    estimate_data["positions"] = parse_text_estimate(content)
+                # Fallback to original parser
+                estimate_data["positions"] = _parse_with_original_method(estimate_file)
         except Exception as e:
             print(f"Ошибка парсинга файла сметы: {e}")
             # Fallback to sample positions
@@ -103,6 +113,24 @@ def get_regional_coefficients(region: str) -> Dict[str, float]:
     }
     
     return regional_coeffs.get(region, {"construction": 0.0, "transport": 0.0, "climate": 0.0})
+
+def _parse_with_original_method(estimate_file: str) -> List[Dict[str, Any]]:
+    """Оригинальный метод парсинга для fallback"""
+    try:
+        # Try to parse as Excel file first
+        if estimate_file.endswith('.xlsx') or estimate_file.endswith('.xls'):
+            return parse_excel_estimate(estimate_file)
+        # Try to parse as CSV file
+        elif estimate_file.endswith('.csv'):
+            return parse_csv_estimate(estimate_file)
+        # Try to parse as text file
+        else:
+            with open(estimate_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                return parse_text_estimate(content)
+    except Exception as e:
+        print(f"Ошибка оригинального парсинга: {e}")
+        return generate_sample_positions()
 
 def generate_sample_positions() -> List[Dict[str, Any]]:
     """
