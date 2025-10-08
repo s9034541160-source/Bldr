@@ -159,17 +159,32 @@ class DataValidator(BaseModel):
 def create_vector_store(self, docs: List[DataValidator], config: Config) -> FAISS:
     """Custom chunking for NTD (preserves hierarchy); LangChain fallback."""
     texts = []
+    metadatas = []
+    
     for doc in docs:
         doc_type = doc.metadata.get('doc_type', 'unknown')  # From Stage 4
         if doc_type in ['sp', 'gost', 'snip']:  # Custom to avoid LangChain break (1 punkt=1 chunk)
-            texts.extend(self._custom_ntd_chunking(doc.content, doc_type))
+            # Используем улучшенный чанкинг с метаданными иерархии
+            chunk_data = self._custom_ntd_chunking_with_metadata(doc.content, doc_type, doc.metadata)
+            for chunk_info in chunk_data:
+                texts.append(chunk_info['text'])
+                metadatas.append(chunk_info['metadata'])
         else:
             splitter = RecursiveCharacterTextSplitter(chunk_size=config.chunk_size, chunk_overlap=config.chunk_overlap)
-            texts.extend(splitter.split_text(doc.content))
+            chunk_texts = splitter.split_text(doc.content)
+            texts.extend(chunk_texts)
+            # Добавляем базовые метаданные для обычных документов
+            for chunk_text in chunk_texts:
+                metadatas.append({
+                    'doc_type': doc_type,
+                    'chunk_type': 'content',
+                    'hierarchy_level': 0,
+                    'parent_path': []
+                })
     
     if HAS_LANGCHAIN:
         embeddings = HuggingFaceEmbeddings(model_name=config.sbert_model)
-        vectorstore = FAISS.from_texts(texts, embeddings)
+        vectorstore = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
         vectorstore.save_local(str(config.base_dir / "faiss_index"))
         return vectorstore
     else:
@@ -193,16 +208,181 @@ def setup_rag_chain(self, vectorstore: FAISS, config: Config) -> RetrievalQA:
     return chain
 
 def _custom_ntd_chunking(self, content: str, doc_type: str) -> List[str]:
-    """Preserves NTD hierarchy (1 punkt = 1 chunk)."""
+    """Recursive ГОСТ-чанкинг с 3-уровневой иерархией (6→6.2→6.2.3)."""
     import re
-    punkt_pattern = r'(\d+\.\d+(?:\.\d+)*)\s+([^а-яё]*[A-Яа-яё].*?)(?=\n\d+\.|\n[А-ЯЁ]{5,}|\Z)'
+    
+    # Улучшенный паттерн для 3-уровневой иерархии ГОСТ
+    # Поддерживает: 6, 6.1, 6.1.1, 6.1.1.1 и т.д.
+    punkt_pattern = r'(\d+(?:\.\d+){0,2})\s+([^а-яё]*[A-Яа-яё].*?)(?=\n\d+(?:\.\d+){0,2}\s|\n[А-ЯЁ]{5,}|\Z)'
+    
     punkts = re.findall(punkt_pattern, content, re.DOTALL | re.IGNORECASE)
-    chunks = [punkt[1] for punkt in punkts if len(punkt[1].strip()) > 20]  # Full punkt content
+    
+    chunks = []
+    chunk_metadata = []
+    
+    for punkt_num, punkt_content in punkts:
+        if len(punkt_content.strip()) < 20:
+            continue
+            
+        # Определяем уровень иерархии по количеству точек
+        level = punkt_num.count('.') + 1
+        parent_path = self._get_parent_path(punkt_num, punkts)
+        
+        # Создаем чанк с метаданными иерархии
+        chunk_text = f"[{punkt_num}] {punkt_content.strip()}"
+        
+        # Добавляем информацию о пути в чанк
+        if parent_path:
+            chunk_text = f"[Путь: {' → '.join(parent_path)} → {punkt_num}]\n{chunk_text}"
+        
+        chunks.append(chunk_text)
+        
+        # Сохраняем метаданные для иерархии
+        chunk_metadata.append({
+            'punkt_num': punkt_num,
+            'level': level,
+            'parent_path': parent_path,
+            'content_length': len(punkt_content.strip())
+        })
+        
+        logger.debug(f"[ГОСТ-ЧАНКИНГ] Создан чанк {punkt_num} (уровень {level}, путь: {' → '.join(parent_path) if parent_path else 'корень'})")
+    
+    # Если чанков мало, используем fallback с сохранением структуры
     if len(chunks) < 3:
-        # Fallback sentences if too few
-        sentences = [s.strip() for s in re.split(r'[.!?]+', content) if len(s.strip()) > 50]
-        chunks.extend(sentences[:20])  # Limit, preserve structure
+        logger.warning(f"[ГОСТ-ЧАНКИНГ] Создано только {len(chunks)} чанков, используем fallback")
+        
+        # Fallback: разбиваем на предложения с сохранением нумерации
+        sentences = re.split(r'[.!?]+', content)
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if len(sentence) > 50:
+                # Пытаемся найти номер в начале предложения
+                num_match = re.match(r'^(\d+(?:\.\d+)*)', sentence)
+                if num_match:
+                    chunk_text = f"[{num_match.group(1)}] {sentence}"
+                else:
+                    chunk_text = f"[fallback_{i}] {sentence}"
+                
+                chunks.append(chunk_text)
+                
+                if len(chunks) >= 20:  # Ограничиваем количество fallback чанков
+                    break
+    
+    logger.info(f"[ГОСТ-ЧАНКИНГ] Создано {len(chunks)} чанков с иерархией для {doc_type}")
     return chunks
+
+def _get_parent_path(self, punkt_num: str, all_punkts: List[Tuple[str, str]]) -> List[str]:
+    """Определяет путь к родительским элементам для пункта."""
+    parts = punkt_num.split('.')
+    parent_path = []
+    
+    # Строим путь от корня до текущего элемента
+    for i in range(len(parts)):
+        if i == 0:
+            # Уровень 1: 6
+            parent_num = parts[0]
+        elif i == 1:
+            # Уровень 2: 6.2
+            parent_num = f"{parts[0]}.{parts[1]}"
+        else:
+            # Уровень 3+: 6.2.3
+            parent_num = '.'.join(parts[:i+1])
+        
+        # Проверяем, существует ли родительский элемент
+        parent_exists = any(p[0] == parent_num for p in all_punkts)
+        if parent_exists and parent_num != punkt_num:
+            parent_path.append(parent_num)
+    
+    return parent_path
+
+def _custom_ntd_chunking_with_metadata(self, content: str, doc_type: str, base_metadata: Dict) -> List[Dict]:
+    """Recursive ГОСТ-чанкинг с полными метаданными иерархии."""
+    import re
+    
+    # Улучшенный паттерн для 3-уровневой иерархии ГОСТ
+    punkt_pattern = r'(\d+(?:\.\d+){0,2})\s+([^а-яё]*[A-Яа-яё].*?)(?=\n\d+(?:\.\d+){0,2}\s|\n[А-ЯЁ]{5,}|\Z)'
+    
+    punkts = re.findall(punkt_pattern, content, re.DOTALL | re.IGNORECASE)
+    
+    chunk_data = []
+    
+    for punkt_num, punkt_content in punkts:
+        if len(punkt_content.strip()) < 20:
+            continue
+            
+        # Определяем уровень иерархии по количеству точек
+        level = punkt_num.count('.') + 1
+        parent_path = self._get_parent_path(punkt_num, punkts)
+        
+        # Создаем чанк с метаданными иерархии
+        chunk_text = f"[{punkt_num}] {punkt_content.strip()}"
+        
+        # Добавляем информацию о пути в чанк
+        if parent_path:
+            chunk_text = f"[Путь: {' → '.join(parent_path)} → {punkt_num}]\n{chunk_text}"
+        
+        # Создаем расширенные метаданные
+        chunk_metadata = {
+            **base_metadata,  # Базовые метаданные документа
+            'punkt_num': punkt_num,
+            'hierarchy_level': level,
+            'parent_path': parent_path,
+            'chunk_type': 'gost_punkt',
+            'content_length': len(punkt_content.strip()),
+            'is_structural': True,
+            'gost_structure': {
+                'section': punkt_num.split('.')[0] if '.' in punkt_num else punkt_num,
+                'subsection': '.'.join(punkt_num.split('.')[:2]) if len(punkt_num.split('.')) > 1 else None,
+                'subsubsection': punkt_num if len(punkt_num.split('.')) > 2 else None
+            }
+        }
+        
+        chunk_data.append({
+            'text': chunk_text,
+            'metadata': chunk_metadata
+        })
+        
+        logger.debug(f"[ГОСТ-МЕТАДАННЫЕ] Создан чанк {punkt_num} с метаданными иерархии")
+    
+    # Если чанков мало, используем fallback с сохранением структуры
+    if len(chunk_data) < 3:
+        logger.warning(f"[ГОСТ-МЕТАДАННЫЕ] Создано только {len(chunk_data)} чанков, используем fallback")
+        
+        # Fallback: разбиваем на предложения с сохранением нумерации
+        sentences = re.split(r'[.!?]+', content)
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if len(sentence) > 50:
+                # Пытаемся найти номер в начале предложения
+                num_match = re.match(r'^(\d+(?:\.\d+)*)', sentence)
+                if num_match:
+                    chunk_text = f"[{num_match.group(1)}] {sentence}"
+                    punkt_num = num_match.group(1)
+                else:
+                    chunk_text = f"[fallback_{i}] {sentence}"
+                    punkt_num = f"fallback_{i}"
+                
+                # Создаем метаданные для fallback чанка
+                fallback_metadata = {
+                    **base_metadata,
+                    'punkt_num': punkt_num,
+                    'hierarchy_level': 0,
+                    'parent_path': [],
+                    'chunk_type': 'fallback',
+                    'content_length': len(sentence),
+                    'is_structural': False
+                }
+                
+                chunk_data.append({
+                    'text': chunk_text,
+                    'metadata': fallback_metadata
+                })
+                
+                if len(chunk_data) >= 20:  # Ограничиваем количество fallback чанков
+                    break
+    
+    logger.info(f"[ГОСТ-МЕТАДАННЫЕ] Создано {len(chunk_data)} чанков с полными метаданными для {doc_type}")
+    return chunk_data
 
 try:
     # Обходим проблему с ComplexWarning в numpy
@@ -9530,7 +9710,7 @@ JSON:"""}
             logger.info(f"[VRAM MANAGER] SBERT unloaded after Stage 14")
 
     def _create_ntd_chunks(self, content: str, structural_data: Dict, metadata: Dict, doc_type_info: Dict) -> List[DocumentChunk]:
-        """Создание чанков для НТД документов (СП, ГОСТ, СНиП)"""
+        """Создание чанков для НТД документов (СП, ГОСТ, СНиП) с рекурсивным ГОСТ-чанкингом"""
         chunks = []
         
         try:
@@ -9547,41 +9727,17 @@ JSON:"""}
                 chunks.append(title_chunk)
                 logger.info(f"[NTD] Создан чанк заголовка: {title[:50]}...")
             
-            # 2. Чанки по секциям документа
-            sections = structural_data.get('sections', [])
-            for i, section in enumerate(sections):
-                section_text = section.get('text', '')
-                section_title = section.get('title', f'Секция {i+1}')
+            # 2. РЕКУРСИВНЫЙ ГОСТ-ЧАНКИНГ: Используем _recursive_gost_chunking для НТД документов
+            logger.info(f"[NTD] Применяем рекурсивный ГОСТ-чанкинг для {doc_type_info.get('doc_type', 'unknown')}")
+            recursive_chunks = self._recursive_gost_chunking(content, metadata)
+            
+            if recursive_chunks:
+                chunks.extend(recursive_chunks)
+                logger.info(f"[NTD] Создано {len(recursive_chunks)} чанков с рекурсивным ГОСТ-чанкингом")
+            else:
+                logger.warning(f"[NTD] Рекурсивный ГОСТ-чанкинг не создал чанков, используем fallback")
                 
-                if section_text and len(section_text.strip()) > 30:
-                    chunk = DocumentChunk(
-                        content=section_text,
-                        chunk_id=f"ntd_section_{i}",
-                        metadata=metadata,
-                        section_id=section_title,
-                        chunk_type="section"
-                    )
-                    chunks.append(chunk)
-                    logger.info(f"[NTD] Создан чанк секции {i}: {section_title}")
-            
-            # 3. Чанки по параграфам (если есть)
-            paragraphs = structural_data.get('paragraphs', [])
-            for i, paragraph in enumerate(paragraphs):
-                paragraph_text = paragraph.get('text', '')
-                if paragraph_text and len(paragraph_text.strip()) > 50:
-                    chunk = DocumentChunk(
-                        content=paragraph_text,
-                        chunk_id=f"ntd_paragraph_{i}",
-                        metadata=metadata,
-                        section_id=paragraph.get('title', f'Параграф {i+1}'),
-                        chunk_type="paragraph"
-                    )
-                    chunks.append(chunk)
-                    logger.info(f"[NTD] Создан чанк параграфа {i}")
-            
-            # 4. Fallback: разбиваем весь контент на чанки если нет структурных данных
-            if not chunks and content:
-                logger.warning(f"[NTD] Нет структурных данных, используем fallback чанкинг")
+                # 3. Fallback: разбиваем весь контент на чанки если рекурсивный чанкинг не сработал
                 chunk_size = 1024
                 overlap = 100
                 
@@ -9591,7 +9747,12 @@ JSON:"""}
                         chunk = DocumentChunk(
                             content=chunk_text,
                             chunk_id=f"ntd_fallback_{i}",
-                            metadata=metadata,
+                            metadata={
+                                **metadata,
+                                "path": ["misc"],
+                                "title": "Основной текст",
+                                "hierarchy_level": 0
+                            },
                             section_id="Основной текст",
                             chunk_type="content"
                         )
@@ -9603,6 +9764,179 @@ JSON:"""}
             
         except Exception as e:
             logger.error(f"[NTD] Ошибка создания чанков для НТД: {e}")
+            return []
+
+    def _recursive_gost_chunking(self, content: str, metadata: Dict) -> List[DocumentChunk]:
+        """Recursive ГОСТ-чанкинг с 3-уровневой иерархией (6→6.2→6.2.3) и сохранением метаданных иерархии.
+        
+        Args:
+            content: Текст документа
+            metadata: Базовые метаданные документа
+            
+        Returns:
+            List[DocumentChunk]: Список чанков с метаданными иерархии
+        """
+        chunks = []
+        
+        try:
+            # ИСПРАВЛЕННЫЕ паттерны для разных уровней
+            # Убираем лишние точки из паттернов
+            level1_pattern = r'^(\d+)\.\s+([^\n]+)'
+            level2_pattern = r'^(\d+\.\d+)\s+([^\n]+)'
+            level3_pattern = r'^(\d+\.\d+\.\d+)\s+([^\n]+)'
+            
+            # Извлекаем разделы всех уровней
+            level1_matches = list(re.finditer(level1_pattern, content, re.MULTILINE | re.DOTALL))
+            level2_matches = list(re.finditer(level2_pattern, content, re.MULTILINE | re.DOTALL))
+            level3_matches = list(re.finditer(level3_pattern, content, re.MULTILINE | re.DOTALL))
+            
+            # Создаем чанки для разделов 1 уровня
+            for i, match in enumerate(level1_matches):
+                section_number = match.group(1)
+                section_title = match.group(2).strip()
+                
+                # Определяем конец текущего раздела
+                section_end = match.end()
+                if i + 1 < len(level1_matches):
+                    section_end = level1_matches[i + 1].start()
+                else:
+                    section_end = len(content)
+                
+                section_text = content[match.start():section_end].strip()
+                
+                if len(section_text) > 50:  # Минимальный размер чанка
+                    chunk = DocumentChunk(
+                        content=section_text,
+                        chunk_id=f"gost_section_{section_number}",
+                        metadata={
+                            **metadata,
+                            "path": [section_number],
+                            "title": section_title,
+                            "hierarchy_level": 1
+                        },
+                        section_id=section_number,
+                        chunk_type="gost_section"
+                    )
+                    chunks.append(chunk)
+                    logger.info(f"[RECURSIVE_GOST] Создан чанк раздела 1 уровня: {section_number}")
+            
+            # Создаем чанки для разделов 2 уровня
+            for i, match in enumerate(level2_matches):
+                section_number = match.group(1)
+                section_title = match.group(2).strip()
+                
+                # Разбираем путь
+                path_parts = section_number.split('.')
+                level1_part = path_parts[0] if len(path_parts) > 0 else ""
+                level2_part = section_number
+                
+                # Определяем конец текущего раздела
+                section_end = match.end()
+                # Ищем следующий раздел того же или более высокого уровня
+                next_section_found = False
+                for j in range(i + 1, len(level2_matches)):
+                    if level2_matches[j].group(1).startswith(level1_part + "."):
+                        section_end = level2_matches[j].start()
+                        next_section_found = True
+                        break
+                
+                if not next_section_found:
+                    # Ищем следующий раздел 1 уровня
+                    level1_part_num = int(level1_part)
+                    for j, l1_match in enumerate(level1_matches):
+                        l1_num = int(l1_match.group(1))
+                        if l1_num > level1_part_num:
+                            section_end = l1_match.start()
+                            next_section_found = True
+                            break
+                
+                if not next_section_found:
+                    section_end = len(content)
+                
+                section_text = content[match.start():section_end].strip()
+                
+                if len(section_text) > 50:  # Минимальный размер чанка
+                    chunk = DocumentChunk(
+                        content=section_text,
+                        chunk_id=f"gost_section_{section_number}",
+                        metadata={
+                            **metadata,
+                            "path": [level1_part, level2_part],
+                            "title": section_title,
+                            "hierarchy_level": 2
+                        },
+                        section_id=section_number,
+                        chunk_type="gost_section"
+                    )
+                    chunks.append(chunk)
+                    logger.info(f"[RECURSIVE_GOST] Создан чанк раздела 2 уровня: {section_number}")
+            
+            # Создаем чанки для разделов 3 уровня
+            for i, match in enumerate(level3_matches):
+                section_number = match.group(1)
+                section_title = match.group(2).strip()
+                
+                # Разбираем путь
+                path_parts = section_number.split('.')
+                level1_part = path_parts[0] if len(path_parts) > 0 else ""
+                level2_part = f"{path_parts[0]}.{path_parts[1]}" if len(path_parts) > 1 else ""
+                level3_part = section_number
+                
+                # Определяем конец текущего раздела
+                section_end = match.end()
+                # Ищем следующий раздел того же уровня
+                next_section_found = False
+                for j in range(i + 1, len(level3_matches)):
+                    if level3_matches[j].group(1).startswith(f"{level1_part}.{level2_part}."):
+                        section_end = level3_matches[j].start()
+                        next_section_found = True
+                        break
+                
+                if not next_section_found:
+                    # Ищем следующий раздел 2 уровня в той же секции 1 уровня
+                    for j, l2_match in enumerate(level2_matches):
+                        l2_num = l2_match.group(1)
+                        if l2_num.startswith(f"{level1_part}.") and l2_num > level2_part:
+                            section_end = l2_match.start()
+                            next_section_found = True
+                            break
+                
+                if not next_section_found:
+                    # Ищем следующий раздел 1 уровня
+                    level1_part_num = int(level1_part)
+                    for j, l1_match in enumerate(level1_matches):
+                        l1_num = int(l1_match.group(1))
+                        if l1_num > level1_part_num:
+                            section_end = l1_match.start()
+                            next_section_found = True
+                            break
+                
+                if not next_section_found:
+                    section_end = len(content)
+                
+                section_text = content[match.start():section_end].strip()
+                
+                if len(section_text) > 50:  # Минимальный размер чанка
+                    chunk = DocumentChunk(
+                        content=section_text,
+                        chunk_id=f"gost_section_{section_number}",
+                        metadata={
+                            **metadata,
+                            "path": [level1_part, level2_part, level3_part],
+                            "title": section_title,
+                            "hierarchy_level": 3
+                        },
+                        section_id=section_number,
+                        chunk_type="gost_section"
+                    )
+                    chunks.append(chunk)
+                    logger.info(f"[RECURSIVE_GOST] Создан чанк раздела 3 уровня: {section_number}")
+            
+            logger.info(f"[RECURSIVE_GOST] Создано {len(chunks)} чанков с иерархией")
+            return chunks
+            
+        except Exception as e:
+            logger.error(f"[RECURSIVE_GOST] Ошибка рекурсивного чанкинга: {e}")
             return []
 
 
