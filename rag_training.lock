@@ -1,8 +1,0 @@
-{
-  "pid": 3172,
-  "start_time": "2025-09-18T20:53:10.930702",
-  "hostname": "DESKTOP-BMKHIVP",
-  "command": "enterprise_rag_trainer_safe.py",
-  "working_dir": "C:\\Bldr",
-  "python_version": "3.12.0 (tags/v3.12.0:0fb18b0, Oct  2 2023, 13:03:39) [MSC v.1935 64 bit (AMD64)]"
-}
