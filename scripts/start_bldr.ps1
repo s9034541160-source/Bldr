@@ -50,6 +50,8 @@ if (Test-Path ".env") {
     $env:NEO4J_PASSWORD = "neopassword"
     $env:REDIS_URL = "redis://localhost:6379"
     $env:NEO4J_URI = "neo4j://127.0.0.1:7687"
+    $env:TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+    $env:TELEGRAM_WEBHOOK_SECRET = "default_secret"
 }
 
 # Ensure Celery broker/result env vars (fallback to REDIS_URL or defaults)
@@ -72,6 +74,9 @@ Write-Host "[INFO] Environment variables:" -ForegroundColor Cyan
 Write-Host "  - NEO4J_USER: $($env:NEO4J_USER)" -ForegroundColor Cyan
 Write-Host "  - NEO4J_PASSWORD: $($env:NEO4J_PASSWORD)" -ForegroundColor Cyan
 Write-Host "  - NEO4J_URI: $($env:NEO4J_URI)" -ForegroundColor Cyan
+Write-Host "  - REDIS_URL: $($env:REDIS_URL)" -ForegroundColor Cyan
+Write-Host "  - TELEGRAM_BOT_TOKEN: $(if ($env:TELEGRAM_BOT_TOKEN -and $env:TELEGRAM_BOT_TOKEN -ne 'YOUR_TELEGRAM_BOT_TOKEN_HERE') { '***configured***' } else { 'not set' })" -ForegroundColor Cyan
+Write-Host "  - TELEGRAM_WEBHOOK_SECRET: $(if ($env:TELEGRAM_WEBHOOK_SECRET) { '***configured***' } else { 'using default' })" -ForegroundColor Cyan
 Write-Host ""
 
 # Check if Neo4j is running
@@ -323,6 +328,39 @@ if ($backendReady) {
     if (-not $toolsReady) {
         Write-Host "[WARN] Tools registry not fully ready; proceeding anyway" -ForegroundColor Yellow
     }
+    
+    # Check new services availability
+    Write-Host "[INFO] Checking new services availability..." -ForegroundColor Cyan
+    
+    # Check Telegram Webhook
+    try {
+        $webhookResp = Invoke-WebRequest -Uri "http://localhost:8000/tg/health" -Method GET -TimeoutSec 5
+        if ($webhookResp.StatusCode -eq 200) {
+            Write-Host "[INFO] Telegram Webhook service ready" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "[WARN] Telegram Webhook service not available" -ForegroundColor Yellow
+    }
+    
+    # Check Tender Analyzer
+    try {
+        $tenderResp = Invoke-WebRequest -Uri "http://localhost:8000/analyze/health" -Method GET -TimeoutSec 5
+        if ($tenderResp.StatusCode -eq 200) {
+            Write-Host "[INFO] Tender Analyzer service ready" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "[WARN] Tender Analyzer service not available" -ForegroundColor Yellow
+    }
+    
+    # Check Estimate Calculator
+    try {
+        $estimateResp = Invoke-WebRequest -Uri "http://localhost:8000/tools/estimate_calculator/health" -Method GET -TimeoutSec 5
+        if ($estimateResp.StatusCode -eq 200) {
+            Write-Host "[INFO] Estimate Calculator service ready" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "[WARN] Estimate Calculator service not available" -ForegroundColor Yellow
+    }
 }
 
 # 5. Start Frontend
@@ -407,6 +445,15 @@ if (Test-Path "integrations\\telegram_bot_aiogram.py") {
 }
 Set-Location -Path $PSScriptRoot
 
+# 7. Start Telegram Webhook (if configured)
+Write-Host "[INFO] Checking Telegram Webhook configuration..." -ForegroundColor Cyan
+if (-not [string]::IsNullOrEmpty($env:TELEGRAM_BOT_TOKEN) -and $env:TELEGRAM_BOT_TOKEN -ne 'YOUR_TELEGRAM_BOT_TOKEN_HERE') {
+    Write-Host "[INFO] Telegram Bot Token configured - webhook endpoints available at /tg/webhook" -ForegroundColor Cyan
+    Write-Host "[INFO] Webhook URL: http://localhost:8000/tg/webhook" -ForegroundColor Cyan
+} else {
+    Write-Host "[WARN] TELEGRAM_BOT_TOKEN not set. Webhook endpoints will not be available." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "   Startup Complete" -ForegroundColor Green
@@ -418,6 +465,9 @@ Write-Host "  - Qdrant: http://localhost:6333 (Docker)" -ForegroundColor Green
 Write-Host "  - FastAPI Backend: http://localhost:8000" -ForegroundColor Green
 Write-Host "  - Frontend Dashboard: http://localhost:3001" -ForegroundColor Green
 Write-Host "  - Telegram Bot: Running in background (check for token in .env)" -ForegroundColor Green
+Write-Host "  - Telegram Webhook: http://localhost:8000/tg/webhook" -ForegroundColor Green
+Write-Host "  - Tender Analyzer: http://localhost:8000/analyze/tender" -ForegroundColor Green
+Write-Host "  - Estimate Calculator: http://localhost:8000/tools/estimate_calculator/" -ForegroundColor Green
 Write-Host ""
 Write-Host "[IMPORTANT] Check the FastAPI and Frontend windows for initialization logs" -ForegroundColor Yellow
 Write-Host "[IMPORTANT] The system will be ready when both windows show successful startup messages" -ForegroundColor Yellow
