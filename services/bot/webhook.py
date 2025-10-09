@@ -5,6 +5,7 @@ import os
 import json
 import hmac
 import hashlib
+import time
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Request, Header
 from fastapi.responses import JSONResponse
@@ -18,6 +19,7 @@ from telegram.ext import Application
 # Импорты для обработки манифестов
 from services.bot.manifest_processor import ManifestProcessor
 from services.bot.state_manager import StateManager
+from services.bot.rate_limit import RateLimiter
 
 # Создаем router
 router = APIRouter(prefix="/tg", tags=["telegram"])
@@ -25,6 +27,7 @@ router = APIRouter(prefix="/tg", tags=["telegram"])
 # Инициализация компонентов
 manifest_processor = ManifestProcessor()
 state_manager = StateManager()
+rate_limiter = RateLimiter()
 
 # Telegram Bot Token (из переменных окружения)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -127,6 +130,32 @@ async def process_telegram_update(update: Update) -> Dict[str, Any]:
         
         if not user_id or not chat_id:
             return {"ok": False, "error": "No user or chat ID"}
+        
+        # Проверяем rate limit
+        is_allowed, remaining = await rate_limiter.check_rate_limit(user_id)
+        if not is_allowed:
+            # Пользователь забанен
+            is_banned, ban_until = await rate_limiter.is_user_banned(user_id)
+            if is_banned:
+                ban_time = ban_until - int(time.time()) if ban_until else 0
+                await update.effective_message.reply_text(
+                    f"🚫 **Вы заблокированы за спам!**\n\n"
+                    f"⏰ Разблокировка через: {ban_time // 60} мин {ban_time % 60} сек\n"
+                    f"📝 Лимит: 20 сообщений в минуту",
+                    parse_mode="Markdown"
+                )
+                return {"ok": False, "error": "User banned for spam"}
+        
+        # Проверяем не забанен ли пользователь
+        is_banned, ban_until = await rate_limiter.is_user_banned(user_id)
+        if is_banned:
+            ban_time = ban_until - int(time.time()) if ban_until else 0
+            await update.effective_message.reply_text(
+                f"🚫 **Вы заблокированы за спам!**\n\n"
+                f"⏰ Разблокировка через: {ban_time // 60} мин {ban_time % 60} сек",
+                parse_mode="Markdown"
+            )
+            return {"ok": False, "error": "User banned"}
         
         # Получаем текущее состояние пользователя
         user_state = await state_manager.get_user_state(user_id)
@@ -233,6 +262,14 @@ async def handle_command(update: Update, user_state: Dict, user_id: int, chat_id
         return await show_finance(update, user_state, user_id, chat_id)
     elif command == "/help":
         return await send_help_message(update, user_id, chat_id)
+    elif command == "/смета":
+        return await start_tender_analysis(update, user_state, user_id, chat_id)
+    elif command == "/график":
+        return await show_schedule(update, user_state, user_id, chat_id)
+    elif command == "/проверить_рд":
+        return await check_project_docs(update, user_state, user_id, chat_id)
+    elif command == "/статус":
+        return await show_status(update, user_id, chat_id)
     else:
         return {"ok": True, "message": "Unknown command"}
 
@@ -440,6 +477,53 @@ async def suggest_tender_analysis(update: Update, user_id: int, chat_id: int) ->
         reply_markup={"inline_keyboard": [[{"text": "📄 Начать анализ", "callback_data": "tender_analysis"}]]}
     )
     return {"ok": True, "message": "Tender analysis suggested"}
+
+
+async def check_project_docs(update: Update, user_state: Dict, user_id: int, chat_id: int) -> Dict[str, Any]:
+    """Проверка проектной документации"""
+    await update.message.reply_text(
+        "🔍 **Проверка проектной документации**\n\n"
+        "Эта функция будет доступна в следующих версиях.\n"
+        "Пока что используйте команду /смета для анализа тендеров.",
+        parse_mode="Markdown"
+    )
+    return {"ok": True, "message": "Project docs check shown"}
+
+
+async def show_status(update: Update, user_id: int, chat_id: int) -> Dict[str, Any]:
+    """Показ статуса системы и лимитов"""
+    try:
+        # Получаем статистику пользователя
+        stats = await rate_limiter.get_user_stats(user_id)
+        
+        # Получаем информацию о хранилище
+        storage_info = rate_limiter.get_storage_info()
+        
+        status_text = f"""
+📊 **Статус системы**
+
+👤 **Ваша статистика:**
+• Сообщений: {stats['message_count']}
+• Статус: {'🚫 Заблокирован' if stats['is_banned'] else '✅ Активен'}
+• Хранилище: {stats['storage_type']}
+
+🔧 **Система:**
+• Хранилище: {storage_info['type']}
+• Лимит: 20 сообщений/минуту
+• Бан: 5 минут при превышении
+
+💡 **Советы:**
+• Используйте кнопки внизу экрана
+• Не отправляйте много сообщений подряд
+• При бане ждите 5 минут
+        """
+        
+        await update.message.reply_text(status_text, parse_mode="Markdown")
+        return {"ok": True, "message": "Status shown"}
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка получения статуса: {str(e)}")
+        return {"ok": False, "error": str(e)}
 
 
 @router.get("/health")

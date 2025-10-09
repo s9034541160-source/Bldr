@@ -4,10 +4,18 @@
 import os
 import tempfile
 from typing import Dict, Any
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from pathlib import Path
 
 from services.tools.tender_analyzer.pipeline import TenderAnalyzerPipeline
+
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """Создание основной клавиатуры с кнопками"""
+    keyboard = [
+        [KeyboardButton("📄 Смета"), KeyboardButton("📊 График")],
+        [KeyboardButton("💰 Финансы"), KeyboardButton("❓ Помощь")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 async def handle_tender(update: Update, manifest: Dict[str, Any], data: Dict[str, Any], user_id: int, chat_id: int) -> Dict[str, Any]:
     """
@@ -89,10 +97,19 @@ async def handle_tender(update: Update, manifest: Dict[str, Any], data: Dict[str
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Отправляем сообщение с inline кнопками
         await update.message.reply_text(
             "🎉 **Анализ завершен успешно!**\n\n"
             "Выберите дальнейшее действие:",
             reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        
+        # Отправляем основную клавиатуру
+        main_keyboard = get_main_keyboard()
+        await update.message.reply_text(
+            "💡 **Используйте кнопки внизу для быстрого доступа к функциям:**",
+            reply_markup=main_keyboard,
             parse_mode="Markdown"
         )
         
