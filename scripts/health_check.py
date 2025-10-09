@@ -49,7 +49,7 @@ class HealthChecker:
     
     def check_all_services(self) -> Dict[str, Dict]:
         """Check all services and return results"""
-        print("🔍 Checking Bldr Empire v0.6 MVP services...")
+        print("Checking Bldr Empire v0.6 MVP services...")
         print("=" * 50)
         
         for name, url in self.services.items():
@@ -62,7 +62,7 @@ class HealthChecker:
                 "url": url
             }
             
-            status = "✅" if is_healthy else "❌"
+            status = "OK" if is_healthy else "FAIL"
             print(f"{status} {message}")
         
         return self.results
@@ -86,7 +86,7 @@ class HealthChecker:
         summary = self.get_summary()
         
         print("\n" + "=" * 50)
-        print("📊 HEALTH CHECK SUMMARY")
+        print("HEALTH CHECK SUMMARY")
         print("=" * 50)
         print(f"Total services: {summary['total_services']}")
         print(f"Healthy: {summary['healthy_services']}")
@@ -95,21 +95,21 @@ class HealthChecker:
         print(f"Overall status: {summary['overall_status'].upper()}")
         
         if summary['overall_status'] == 'healthy':
-            print("\n🎉 All critical services are healthy!")
+            print("\nAll critical services are healthy!")
         else:
-            print("\n⚠️ Some services are unhealthy. Check the details above.")
+            print("\nSome services are unhealthy. Check the details above.")
     
     def print_unhealthy_services(self):
         """Print details of unhealthy services"""
         unhealthy = {name: result for name, result in self.results.items() if not result["healthy"]}
         
         if unhealthy:
-            print("\n❌ UNHEALTHY SERVICES:")
+            print("\nUNHEALTHY SERVICES:")
             print("-" * 30)
             for name, result in unhealthy.items():
-                print(f"• {name}: {result['message']}")
+                print(f"- {name}: {result['message']}")
         else:
-            print("\n✅ All services are healthy!")
+            print("\nAll services are healthy!")
     
     def save_results(self, filename: str = "health_check_results.json"):
         """Save health check results to file"""
@@ -122,12 +122,12 @@ class HealthChecker:
         with open(filename, 'w') as f:
             json.dump(results, f, indent=2)
         
-        print(f"\n💾 Results saved to {filename}")
+        print(f"\nResults saved to {filename}")
 
 
 def main():
     """Main health check function"""
-    print("🏥 Bldr Empire v0.6 MVP - Health Check")
+    print("Bldr Empire v0.6 MVP - Health Check")
     print("=" * 50)
     
     checker = HealthChecker()
@@ -147,10 +147,10 @@ def main():
     # Exit with appropriate code
     summary = checker.get_summary()
     if summary['overall_status'] == 'healthy':
-        print("\n✅ Health check passed!")
+        print("\nHealth check passed!")
         sys.exit(0)
     else:
-        print("\n❌ Health check failed!")
+        print("\nHealth check failed!")
         sys.exit(1)
 
 
