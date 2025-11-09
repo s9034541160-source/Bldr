@@ -26,5 +26,12 @@ def get_db():
 
 # Импорт моделей для Alembic (после определения Base)
 from backend.models.auth import User, Role, Permission
+from backend.models.document import Document, DocumentVersion, DocumentMetadata
+from backend.models.project import Project
 
-__all__ = ["Base", "engine", "SessionLocal", "get_db", "User", "Role", "Permission"]
+__all__ = [
+    "Base", "engine", "SessionLocal", "get_db",
+    "User", "Role", "Permission",
+    "Document", "DocumentVersion", "DocumentMetadata",
+    "Project"
+]
