@@ -39,10 +39,11 @@ app.add_middleware(
 )
 
 # Подключение роутеров
-from backend.api.endpoints import auth, health, llm
+from backend.api.endpoints import auth, health, llm, rag
 app.include_router(auth.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(llm.router, prefix="/api")
+app.include_router(rag.router, prefix="/api")
 
 
 @app.get("/")
