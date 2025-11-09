@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.models.document import Document, DocumentVersion, DocumentMetadata
 from backend.models.project import Project
 from backend.services.minio_service import minio_service
+from backend.services.document_classifier import document_classifier
 from datetime import datetime
 import hashlib
 import logging
@@ -61,6 +62,28 @@ class SODService:
             metadata={"title": title, "document_type": document_type}
         )
         
+        # Классификация документа
+        classification = document_classifier.classify_document(
+            title=title,
+            file_name=file_name
+        )
+        
+        # Извлечение метаданных
+        extracted_metadata = document_classifier.extract_metadata(
+            file_name=file_name
+        )
+        
+        # Объединение метаданных
+        final_metadata = {
+            **(metadata or {}),
+            "classification": classification,
+            "extracted": extracted_metadata
+        }
+        
+        # Использование классификации для document_type если не указан
+        if not document_type or document_type == "unknown":
+            document_type = classification.get("classification", "other")
+        
         # Создание записи в БД
         document = Document(
             title=title,
@@ -71,7 +94,7 @@ class SODService:
             document_type=document_type,
             project_id=project_id,
             created_by=created_by,
-            metadata=metadata or {}
+            metadata=final_metadata
         )
         
         self.db.add(document)
@@ -169,9 +192,23 @@ class SODService:
         document_type: Optional[str] = None,
         project_id: Optional[int] = None,
         status: Optional[str] = None,
-        limit: int = 50
+        limit: int = 50,
+        use_fulltext: bool = True
     ) -> List[Document]:
         """Поиск документов"""
+        from backend.services.fulltext_search import FulltextSearchService
+        
+        # Использование полнотекстового поиска если есть запрос
+        if query and use_fulltext:
+            search_service = FulltextSearchService(self.db)
+            return search_service.search(
+                query=query,
+                document_type=document_type,
+                project_id=project_id,
+                limit=limit
+            )
+        
+        # Простой поиск
         q = self.db.query(Document).filter(Document.is_active == True)
         
         if query:
