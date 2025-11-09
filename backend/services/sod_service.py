@@ -29,7 +29,8 @@ class SODService:
         document_type: str,
         project_id: Optional[int] = None,
         created_by: int = 1,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        auto_grant_permissions: bool = True
     ) -> Document:
         """
         Создание нового документа
@@ -114,8 +115,61 @@ class SODService:
         self.db.commit()
         self.db.refresh(document)
         
+        # Автоматическое предоставление прав создателю
+        if auto_grant_permissions:
+            try:
+                from backend.services.document_permission_service import DocumentPermissionService
+                permission_service = DocumentPermissionService(self.db)
+                permission_service.grant_permission(
+                    document_id=document.id,
+                    subject_type="user",
+                    subject_id=created_by,
+                    permission_type="admin"
+                )
+                
+                # Наследование прав от проекта, если указан
+                if project_id:
+                    permission_service.inherit_from_project(document.id, project_id)
+            except Exception as e:
+                logger.warning(f"Failed to grant permissions: {e}")
+        
         logger.info(f"Created document {document.id}: {title}")
         return document
+    
+    def revert_to_version(
+        self,
+        document_id: int,
+        version_number: int,
+        reverted_by: int
+    ) -> DocumentVersion:
+        """Откат документа к предыдущей версии"""
+        document = self.get_document(document_id)
+        if not document:
+            raise ValueError(f"Document {document_id} not found")
+        
+        # Получение версии для отката
+        version = self.db.query(DocumentVersion).filter(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.version_number == version_number
+        ).first()
+        
+        if not version:
+            raise ValueError(f"Version {version_number} not found for document {document_id}")
+        
+        # Скачивание файла версии
+        from backend.services.minio_service import minio_service
+        file_data = minio_service.download_file("documents", version.file_path)
+        
+        # Создание новой версии с содержимым старой
+        new_version = self.create_version(
+            document_id=document_id,
+            file_data=file_data,
+            change_description=f"Reverted to version {version_number}",
+            changed_by=reverted_by
+        )
+        
+        logger.info(f"Reverted document {document_id} to version {version_number}")
+        return new_version
     
     def create_version(
         self,

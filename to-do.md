@@ -442,9 +442,13 @@
 - [x] Реализован гибридный поиск (fulltext + semantic)
 
 #### 2.1.5. Права доступа
-- [ ] Реализовать проверку прав на уровне документа
-- [ ] Добавить наследование прав от проекта
-- [ ] Реализовать аудит доступа к документам
+- [x] Реализовать проверку прав на уровне документа
+- [x] Добавить наследование прав от проекта
+- [x] Реализовать аудит доступа к документам
+- [x] Созданы модели DocumentPermission и DocumentAccessLog
+- [x] Реализован DocumentPermissionService
+- [x] Добавлен middleware для проверки прав доступа
+- [x] API эндпоинты для управления правами
 
 #### 2.1.6. API эндпоинты
 - [x] `POST /api/sod/documents` - загрузка документа
@@ -452,9 +456,13 @@
 - [x] `GET /api/sod/documents/{id}` - получение документа
 - [x] `POST /api/sod/documents/{id}/versions` - создание версии
 - [x] `GET /api/sod/documents/{id}/download` - скачивание документа/версии
-- [ ] `POST /api/sod/documents/{id}/revert` - откат к версии
+- [x] `POST /api/sod/documents/{id}/revert` - откат к версии
 - [x] Поиск документов (через GET /api/sod/documents с параметрами)
 - [x] Мягкое удаление документа (is_active=False)
+- [x] `POST /api/documents/{id}/permissions` - предоставление права
+- [x] `DELETE /api/documents/{id}/permissions` - отзыв права
+- [x] `GET /api/documents/{id}/permissions` - список прав
+- [x] `POST /api/documents/{id}/inherit-from-project` - наследование от проекта
 
 ### 2.2. UI для СОД (Frontend)
 

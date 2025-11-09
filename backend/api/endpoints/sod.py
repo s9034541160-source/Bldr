@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 from backend.models import get_db
 from backend.services.sod_service import SODService
 from backend.services.document_search import DocumentSearchService
+from backend.services.document_permission_service import DocumentPermissionService
 from backend.middleware.rbac import get_current_user, require_permission
+from backend.middleware.document_permission import require_document_permission
 from backend.models.auth import User
 import logging
 
@@ -71,19 +73,11 @@ async def create_document(
 
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
-@require_permission("document", "read")
 async def get_document(
-    document_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    document: Document = Depends(require_document_permission("read")),
+    current_user: User = Depends(get_current_user)
 ):
-    """Получение документа"""
-    service = SODService(db)
-    document = service.get_document(document_id)
-    
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
+    """Получение документа (с проверкой прав доступа)"""
     return DocumentResponse(
         id=document.id,
         title=document.title,
@@ -154,15 +148,15 @@ async def search_documents(
 
 
 @router.post("/documents/{document_id}/versions")
-@require_permission("document", "write")
 async def create_version(
     document_id: int,
     change_description: str = Form(...),
     file: UploadFile = File(...),
+    document: Document = Depends(require_document_permission("write")),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Создание новой версии документа"""
+    """Создание новой версии документа (с проверкой прав доступа)"""
     try:
         file_data = await file.read()
         
@@ -186,22 +180,48 @@ async def create_version(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/documents/{document_id}/download")
-@require_permission("document", "read")
-async def download_document(
+@router.post("/documents/{document_id}/revert")
+async def revert_document(
     document_id: int,
-    version: Optional[int] = None,
+    version_number: int,
+    document: Document = Depends(require_document_permission("write")),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Скачивание документа"""
+    """Откат документа к предыдущей версии"""
+    try:
+        service = SODService(db)
+        version = service.revert_to_version(
+            document_id=document_id,
+            version_number=version_number,
+            reverted_by=current_user.id
+        )
+        
+        return {
+            "status": "reverted",
+            "new_version_number": version.version_number,
+            "reverted_to_version": version_number,
+            "created_at": version.created_at.isoformat()
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Revert error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents/{document_id}/download")
+async def download_document(
+    document_id: int,
+    version: Optional[int] = None,
+    document: Document = Depends(require_document_permission("read")),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Скачивание документа (с проверкой прав доступа)"""
     from fastapi.responses import Response
     
     service = SODService(db)
-    document = service.get_document(document_id)
-    
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
     
     # Определение версии для скачивания
     if version:
