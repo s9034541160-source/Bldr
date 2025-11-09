@@ -1,0 +1,89 @@
+"""
+Сервис для работы с Qdrant
+"""
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+from backend.config.settings import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class QdrantService:
+    """Сервис для работы с Qdrant"""
+    
+    def __init__(self):
+        self.client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None
+        )
+        self.collection_name = settings.RAG_COLLECTION_NAME
+    
+    def init_collection(self, vector_size: int = 384):
+        """Инициализация коллекции"""
+        try:
+            # Проверка существования коллекции
+            collections = self.client.get_collections()
+            collection_names = [col.name for col in collections.collections]
+            
+            if self.collection_name not in collection_names:
+                self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(
+                        size=vector_size,
+                        distance=Distance.COSINE
+                    )
+                )
+                logger.info(f"Created collection: {self.collection_name}")
+            else:
+                logger.info(f"Collection {self.collection_name} already exists")
+        except Exception as e:
+            logger.error(f"Error initializing collection: {e}")
+            raise
+    
+    def add_document(self, document_id: str, vector: list, payload: dict):
+        """Добавление документа в коллекцию"""
+        point = PointStruct(
+            id=document_id,
+            vector=vector,
+            payload=payload
+        )
+        self.client.upsert(
+            collection_name=self.collection_name,
+            points=[point]
+        )
+    
+    def search(self, query_vector: list, limit: int = 10, filter_dict: dict = None):
+        """Поиск похожих документов"""
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        
+        search_filter = None
+        if filter_dict:
+            conditions = []
+            for key, value in filter_dict.items():
+                conditions.append(
+                    FieldCondition(key=key, match=MatchValue(value=value))
+                )
+            search_filter = Filter(must=conditions)
+        
+        results = self.client.search(
+            collection_name=self.collection_name,
+            query_vector=query_vector,
+            limit=limit,
+            query_filter=search_filter
+        )
+        
+        return results
+    
+    def delete_document(self, document_id: str):
+        """Удаление документа"""
+        self.client.delete(
+            collection_name=self.collection_name,
+            points_selector=[document_id]
+        )
+
+
+# Глобальный экземпляр сервиса
+qdrant_service = QdrantService()
+
