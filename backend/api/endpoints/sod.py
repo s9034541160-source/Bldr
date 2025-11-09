@@ -2,7 +2,7 @@
 API эндпоинты для СОД (Среда общих данных)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from backend.services.document_permission_service import DocumentPermissionServi
 from backend.middleware.rbac import get_current_user, require_permission
 from backend.middleware.document_permission import require_document_permission
 from backend.models.auth import User
+from backend.models.document import Document
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,17 @@ class DocumentResponse(BaseModel):
     document_type: str
     version: int
     status: str
+    created_at: str
+    
+    class Config:
+        from_attributes = True
+
+
+class VersionResponse(BaseModel):
+    """Ответ с информацией о версии"""
+    id: int
+    version_number: int
+    change_description: Optional[str]
     created_at: str
     
     class Config:
@@ -92,12 +104,12 @@ async def get_document(
 @router.get("/documents", response_model=List[DocumentResponse])
 @require_permission("document", "read")
 async def search_documents(
-    query: Optional[str] = None,
-    document_type: Optional[str] = None,
-    project_id: Optional[int] = None,
-    status: Optional[str] = None,
-    search_type: str = "fulltext",  # fulltext, semantic, hybrid
-    limit: int = 50,
+    query: Optional[str] = Query(None),
+    document_type: Optional[str] = Query(None),
+    project_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    search_type: str = Query("fulltext"),  # fulltext, semantic, hybrid
+    limit: int = Query(50),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -147,6 +159,28 @@ async def search_documents(
     ]
 
 
+@router.get("/documents/{document_id}/versions", response_model=List[VersionResponse])
+async def get_document_versions(
+    document_id: int,
+    document: Document = Depends(require_document_permission("read")),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Получение всех версий документа"""
+    service = SODService(db)
+    versions = service.get_document_versions(document_id)
+    
+    return [
+        VersionResponse(
+            id=v.id,
+            version_number=v.version_number,
+            change_description=v.change_description,
+            created_at=v.created_at.isoformat()
+        )
+        for v in versions
+    ]
+
+
 @router.post("/documents/{document_id}/versions")
 async def create_version(
     document_id: int,
@@ -183,7 +217,7 @@ async def create_version(
 @router.post("/documents/{document_id}/revert")
 async def revert_document(
     document_id: int,
-    version_number: int,
+    version_number: int = Form(...),
     document: Document = Depends(require_document_permission("write")),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -213,7 +247,7 @@ async def revert_document(
 @router.get("/documents/{document_id}/download")
 async def download_document(
     document_id: int,
-    version: Optional[int] = None,
+    version: Optional[int] = Query(None),
     document: Document = Depends(require_document_permission("read")),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -235,6 +269,7 @@ async def download_document(
     
     # Скачивание из MinIO
     try:
+        from backend.services.minio_service import minio_service
         file_data = minio_service.download_file("documents", file_path)
         
         return Response(
@@ -248,3 +283,19 @@ async def download_document(
         logger.error(f"Download error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    document_id: int,
+    document: Document = Depends(require_document_permission("delete")),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Мягкое удаление документа"""
+    try:
+        service = SODService(db)
+        service.delete_document(document_id, current_user.id)
+        return {"status": "deleted"}
+    except Exception as e:
+        logger.error(f"Delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

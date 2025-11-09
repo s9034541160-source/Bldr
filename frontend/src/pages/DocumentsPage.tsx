@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Table, Button, Input, Select, Space, Tag, message, Upload, Modal, Card } from 'antd'
 import { UploadOutlined, SearchOutlined, EyeOutlined, DownloadOutlined, DeleteOutlined } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import { documentsApi, Document } from '../api/documents'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -10,6 +11,7 @@ const { Option } = Select
 
 
 const DocumentsPage = () => {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(false)
@@ -141,7 +143,7 @@ const DocumentsPage = () => {
           <Button
             type="link"
             icon={<EyeOutlined />}
-            onClick={() => window.location.href = `/documents/${record.id}`}
+            onClick={() => navigate(`/documents/${record.id}`)}
           >
             Просмотр
           </Button>
