@@ -34,6 +34,7 @@ docx2pdf==0.1.8
 llama-cpp-python==0.2.20
 sentence-transformers==2.2.2
 transformers==4.35.2
+numpy==1.24.3
 
 # MinIO
 minio==7.2.0

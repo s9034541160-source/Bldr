@@ -116,11 +116,13 @@ class ValidationController:
             rag_embedding = rag_service.create_embedding(best_rag_text)
             
             # Расчет косинусного расстояния
-            from numpy import dot
-            from numpy.linalg import norm
+            import numpy as np
             
-            cosine_similarity = dot(llm_embedding, rag_embedding) / (
-                norm(llm_embedding) * norm(rag_embedding)
+            llm_array = np.array(llm_embedding)
+            rag_array = np.array(rag_embedding)
+            
+            cosine_similarity = np.dot(llm_array, rag_array) / (
+                np.linalg.norm(llm_array) * np.linalg.norm(rag_array)
             )
             
             # Преобразование в расхождение (1 - similarity)
