@@ -8,6 +8,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from backend.models import get_db
 from backend.services.sod_service import SODService
+from backend.services.document_search import DocumentSearchService
 from backend.middleware.rbac import get_current_user, require_permission
 from backend.models.auth import User
 import logging
@@ -101,19 +102,42 @@ async def search_documents(
     document_type: Optional[str] = None,
     project_id: Optional[int] = None,
     status: Optional[str] = None,
+    search_type: str = "fulltext",  # fulltext, semantic, hybrid
     limit: int = 50,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Поиск документов"""
-    service = SODService(db)
-    documents = service.search_documents(
-        query=query,
-        document_type=document_type,
-        project_id=project_id,
-        status=status,
-        limit=limit
-    )
+    if query and search_type in ["semantic", "hybrid"]:
+        # Использование семантического или гибридного поиска
+        search_service = DocumentSearchService(db)
+        
+        if search_type == "semantic":
+            results = search_service.semantic_search(
+                query=query,
+                document_type=document_type,
+                project_id=project_id,
+                limit=limit
+            )
+            documents = [r["document"] for r in results]
+        else:  # hybrid
+            results = search_service.hybrid_search(
+                query=query,
+                document_type=document_type,
+                project_id=project_id,
+                limit=limit
+            )
+            documents = [r["document"] for r in results]
+    else:
+        # Обычный поиск через SODService
+        service = SODService(db)
+        documents = service.search_documents(
+            query=query,
+            document_type=document_type,
+            project_id=project_id,
+            status=status,
+            limit=limit
+        )
     
     return [
         DocumentResponse(
