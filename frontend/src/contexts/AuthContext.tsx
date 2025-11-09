@@ -45,29 +45,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [])
 
   const login = async (username: string, password: string) => {
-    const formData = new FormData()
-    formData.append('username', username)
-    formData.append('password', password)
+    const formDataEncoded = new URLSearchParams()
+    formDataEncoded.append('username', username)
+    formDataEncoded.append('password', password)
 
-      const formDataEncoded = new URLSearchParams()
-      formDataEncoded.append('username', username)
-      formDataEncoded.append('password', password)
+    const response = await apiClient.post('/auth/login', formDataEncoded, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    })
 
-      const response = await apiClient.post('/auth/login', formDataEncoded, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      })
-
-      const { access_token, refresh_token } = response.data
-      
-      // Получаем информацию о пользователе
-      const userResponse = await apiClient.get('/auth/me', {
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-        },
-      })
-      const user = userResponse.data
+    const { access_token, refresh_token } = response.data
+    
+    // Получаем информацию о пользователе
+    const userResponse = await apiClient.get('/auth/me', {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+      },
+    })
+    const user = userResponse.data
+    
     localStorage.setItem('access_token', access_token)
     if (refresh_token) {
       localStorage.setItem('refresh_token', refresh_token)
