@@ -38,6 +38,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Подключение роутеров
+from backend.api.endpoints import auth
+app.include_router(auth.router, prefix="/api")
+
 
 @app.get("/")
 async def root():
