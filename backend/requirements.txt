@@ -1,0 +1,54 @@
+# FastAPI и веб-сервер
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Базы данных
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+neo4j==5.14.1
+qdrant-client==1.7.0
+redis==5.0.1
+
+# Аутентификация и безопасность
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Валидация данных
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# HTTP клиенты
+httpx==0.25.2
+requests==2.31.0
+
+# Обработка документов
+PyMuPDF==1.23.8
+python-docx==1.1.0
+openpyxl==3.1.2
+docx2pdf==0.1.8
+
+# ИИ и ML
+llama-cpp-python==0.2.20
+sentence-transformers==2.2.2
+transformers==4.35.2
+
+# Очереди задач
+celery==5.3.4
+flower==2.0.1
+
+# Логирование
+structlog==23.2.0
+
+# Утилиты
+python-dotenv==1.0.0
+pytz==2023.3
+
+# Тестирование
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.2
+
