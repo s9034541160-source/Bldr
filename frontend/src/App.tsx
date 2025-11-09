@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import MainLayout from './layout/MainLayout'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
+import DocumentsPage from './pages/DocumentsPage'
+import DocumentDetailPage from './pages/DocumentDetailPage'
 
 // Компонент для защищенных роутов
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -33,7 +35,9 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<HomePage />} />
+              <Route index element={<HomePage />} />
+              <Route path="documents" element={<DocumentsPage />} />
+              <Route path="documents/:id" element={<DocumentDetailPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
