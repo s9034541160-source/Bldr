@@ -33,6 +33,16 @@ class RAGService:
         self.parallel_workers = settings.RAG_PARALLEL_WORKERS
         self.cache_ttl = settings.RAG_CACHE_TTL_SECONDS
         self._local_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._metrics: Dict[str, Any] = {
+            "search_requests": 0,
+            "search_cache_hits": 0,
+            "search_avg_latency_ms": 0.0,
+            "rag_requests": 0,
+            "rag_avg_latency_ms": 0.0,
+            "indexed_documents": 0,
+            "indexed_chunks": 0,
+            "last_error": None,
+        }
     
     def _load_embedding_model(self):
         """Загрузка модели для эмбеддингов"""
@@ -148,11 +158,13 @@ class RAGService:
             # Добавление в Qdrant
             qdrant_service.add_documents_batch([point])
             
+            self._metrics["indexed_documents"] += 1
             logger.info(f"Document {document_id} indexed successfully")
             return True
             
         except Exception as e:
             logger.error(f"Failed to index document {document_id}: {e}")
+            self._metrics["last_error"] = str(e)
             return False
 
     def index_document_chunks(
@@ -185,12 +197,17 @@ class RAGService:
                 batch.append(point)
                 if len(batch) >= self.batch_size:
                     qdrant_service.add_documents_batch(batch)
+                    self._metrics["indexed_chunks"] += len(batch)
                     batch = []
             except Exception as exc:
                 logger.error("Failed to build chunk %s: %s", chunk_id, exc)
                 success = False
+                self._metrics["last_error"] = str(exc)
         if batch:
             qdrant_service.add_documents_batch(batch)
+            self._metrics["indexed_chunks"] += len(batch)
+        if success:
+            self._metrics["indexed_documents"] += 1
         return success
 
     def index_file(
@@ -220,6 +237,7 @@ class RAGService:
             )
         except Exception as exc:
             logger.error("Failed to index file %s: %s", file_path, exc)
+            self._metrics["last_error"] = str(exc)
             return False
 
     def index_files_parallel(
@@ -255,9 +273,11 @@ class RAGService:
                         results["succeeded"] += 1
                     else:
                         results["failed"].append(item["document_id"])
+                        self._metrics["last_error"] = f"Indexing failed for {item['document_id']}"
                 except Exception as exc:
                     logger.error("Parallel indexing failed for %s: %s", item, exc)
                     results["failed"].append(item["document_id"])
+                    self._metrics["last_error"] = str(exc)
         return results
     
     def search(
@@ -285,9 +305,13 @@ class RAGService:
             score_threshold=score_threshold,
             filter_dict=filter_dict,
         )
+        start_time = time.perf_counter()
+        self._metrics["search_requests"] += 1
         cached = self._get_cached_result(cache_key)
         if cached is not None:
             logger.debug("RAG search cache hit for key %s", cache_key)
+            self._metrics["search_cache_hits"] += 1
+            self._record_metric("search_avg_latency_ms", start_time)
             return cached
 
         try:
@@ -315,10 +339,13 @@ class RAGService:
                     })
             
             self._store_cached_result(cache_key, formatted_results)
+            self._record_metric("search_avg_latency_ms", start_time)
             return formatted_results
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
+            self._metrics["last_error"] = str(e)
+            self._record_metric("search_avg_latency_ms", start_time)
             return []
     
     def generate_answer(
@@ -400,6 +427,9 @@ class RAGService:
         Returns:
             Ответ с источниками
         """
+        start_time = time.perf_counter()
+        self._metrics["rag_requests"] += 1
+
         # Поиск релевантных документов
         documents = self.search(
             query=query,
@@ -408,6 +438,7 @@ class RAGService:
         )
         
         if not documents:
+            self._record_metric("rag_avg_latency_ms", start_time)
             return {
                 "answer": "Не найдено релевантных документов для ответа на вопрос.",
                 "sources": [],
@@ -415,12 +446,31 @@ class RAGService:
             }
         
         # Генерация ответа
-        return self.generate_answer(
+        result = self.generate_answer(
             query=query,
             context_documents=documents,
             max_tokens=max_tokens,
             temperature=temperature
         )
+        self._record_metric("rag_avg_latency_ms", start_time)
+        return result
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Возвращает текущие метрики работы RAG."""
+        metrics = dict(self._metrics)
+        metrics["cache_ttl_seconds"] = self.cache_ttl
+        metrics["batch_size"] = self.batch_size
+        metrics["parallel_workers"] = self.parallel_workers
+        metrics["cache_local_entries"] = len(self._local_cache)
+        return metrics
+
+    def _record_metric(self, metric_key: str, start_time: float) -> None:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        current = self._metrics.get(metric_key, 0.0)
+        if current == 0.0:
+            self._metrics[metric_key] = duration_ms
+        else:
+            self._metrics[metric_key] = (current + duration_ms) / 2
     
     def delete_document(self, document_id: str) -> bool:
         """Удаление документа из индекса"""
