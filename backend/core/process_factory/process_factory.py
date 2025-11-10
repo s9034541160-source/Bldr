@@ -2,13 +2,30 @@
 ProcessFactory - генератор кода для бизнес-процессов
 """
 
-import os
-import json
-from typing import Dict, Any, List, Optional
-from pathlib import Path
+from __future__ import annotations
+
 import logging
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from openpyxl import load_workbook
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, kw_only=True)
+class ProcessSpecification:
+    """Описание бизнес-процесса для генерации кода."""
+
+    process_id: str
+    process_name: str
+    description: str
+    process_type: str = "standard"
+    inputs: List[Dict[str, Any]] = field(default_factory=list)
+    outputs: List[Dict[str, Any]] = field(default_factory=list)
+    steps: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class ProcessFactory:
@@ -24,6 +41,7 @@ class ProcessFactory:
     
     def create_process(
         self,
+        *,
         process_id: str,
         process_name: str,
         description: str,
@@ -58,7 +76,7 @@ class ProcessFactory:
             ("agent.py", self._generate_agent(process_id, process_name, description, steps)),
             ("schemas.py", self._generate_schemas(process_id, inputs, outputs)),
             ("service.py", self._generate_service(process_id, process_name, steps)),
-            ("api.py", self._generate_api(process_id, process_name)),
+            ("api.py", self._generate_api(process_id, process_name, process_type)),
             ("README.md", self._generate_readme(process_id, process_name, description, inputs, outputs, steps)),
         ]
         
@@ -75,6 +93,23 @@ class ProcessFactory:
             "files": created_files
         }
     
+    def create_process_from_spec(self, spec: ProcessSpecification) -> Dict[str, Any]:
+        """Создание процесса по спецификации."""
+        return self.create_process(
+            process_id=spec.process_id,
+            process_name=spec.process_name,
+            description=spec.description,
+            process_type=spec.process_type,
+            inputs=spec.inputs,
+            outputs=spec.outputs,
+            steps=spec.steps,
+        )
+
+    def create_process_from_excel(self, excel_path: str | Path) -> Dict[str, Any]:
+        """Создание процесса на основе Excel-описания."""
+        specification = self.parse_excel_spec(excel_path)
+        return self.create_process_from_spec(specification)
+
     def _generate_init(self, process_id: str, process_name: str) -> str:
         """Генерация __init__.py"""
         return f'''"""
@@ -239,10 +274,11 @@ class {class_name}Service:
         }}
 '''
     
-    def _generate_api(self, process_id: str, process_name: str) -> str:
+    def _generate_api(self, process_id: str, process_name: str, process_type: str) -> str:
         """Генерация API эндпоинтов"""
         class_name = self._to_class_name(process_id)
         route_name = process_id.lower().replace(".", "_")
+        tag_name = f"{process_type}:{process_id}"
         
         return f'''"""
 API эндпоинты для процесса {process_id}: {process_name}
@@ -258,6 +294,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/{route_name}", tags=["{process_id}"])
+PROCESS_TAG = "{tag_name}"
 
 service = {class_name}Service()
 
@@ -330,6 +367,89 @@ result = agent.execute("task", {{"inputs": {{}}}})
 '''
         return readme
     
+    def parse_excel_spec(self, excel_path: str | Path) -> ProcessSpecification:
+        """Парсинг Excel-файла с описанием процесса."""
+        excel_path = Path(excel_path)
+        if not excel_path.exists():
+            raise FileNotFoundError(f"Excel file not found: {excel_path}")
+
+        workbook = load_workbook(excel_path, data_only=True)
+        sheets = {sheet.title.lower(): sheet for sheet in workbook.worksheets}
+
+        overview_sheet = sheets.get("overview") or workbook.active
+        overview = self._parse_overview_sheet(overview_sheet)
+
+        inputs = self._parse_table_sheet(sheets.get("inputs"))
+        outputs = self._parse_table_sheet(sheets.get("outputs"))
+        steps = self._parse_steps_sheet(sheets.get("steps"))
+
+        return ProcessSpecification(
+            process_id=overview["process_id"],
+            process_name=overview["process_name"],
+            description=overview["description"],
+            process_type=overview.get("process_type", "standard"),
+            inputs=inputs,
+            outputs=outputs,
+            steps=steps,
+        )
+
+    def _parse_overview_sheet(self, sheet) -> Dict[str, str]:
+        data: Dict[str, str] = {
+            "process_id": "",
+            "process_name": "",
+            "description": "",
+            "process_type": "standard",
+        }
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            key = str(row[0]).strip().lower()
+            value = "" if len(row) < 2 or row[1] is None else str(row[1]).strip()
+            match key:
+                case "id" | "process_id":
+                    data["process_id"] = value
+                case "name" | "process_name":
+                    data["process_name"] = value
+                case "description":
+                    data["description"] = value
+                case "type" | "process_type":
+                    data["process_type"] = value or data["process_type"]
+        missing = [k for k, v in data.items() if not v and k in {"process_id", "process_name", "description"}]
+        if missing:
+            raise ValueError(f"Missing required overview fields: {', '.join(missing)}")
+        return data
+
+    def _parse_table_sheet(self, sheet) -> List[Dict[str, Any]]:
+        if sheet is None:
+            return []
+        headers = [str(cell.value).strip().lower() for cell in sheet[1] if cell.value]
+        records: List[Dict[str, Any]] = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not any(row):
+                continue
+            record = {}
+            for header, value in zip(headers, row):
+                record[header] = value
+            records.append(record)
+        return records
+
+    def _parse_steps_sheet(self, sheet) -> List[Dict[str, Any]]:
+        steps = self._parse_table_sheet(sheet)
+        enriched_steps: List[Dict[str, Any]] = []
+        for index, step in enumerate(steps, start=1):
+            name = step.get("name") or step.get("step") or f"Step {index}"
+            description = step.get("description", "")
+            owner = step.get("owner") or step.get("responsible")
+            enriched_steps.append(
+                {
+                    "name": str(name),
+                    "description": description,
+                    "owner": owner,
+                    "order": index,
+                }
+            )
+        return enriched_steps
+
     def _to_class_name(self, process_id: str) -> str:
         """Преобразование ID процесса в имя класса"""
         # F1.01 -> F1_01 -> F101
