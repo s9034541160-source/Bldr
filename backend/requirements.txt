@@ -37,7 +37,7 @@ llama-cpp-python==0.2.20
 sentence-transformers==2.2.2
 transformers==4.35.2
 aiogram==3.4.1
-unsloth==0.6.6
+unsloth==2025.3.19
 accelerate==0.24.1
 bitsandbytes==0.41.2
 torch==2.1.2
