@@ -4,8 +4,8 @@ API эндпоинты для работы с LLM
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Union
 from backend.config.settings import settings
 from backend.core.model_manager import model_manager
 from backend.middleware.rbac import get_current_user
@@ -72,6 +72,19 @@ class UpdateGenerationParametersRequest(BaseModel):
     top_k: Optional[int] = None
     repeat_penalty: Optional[float] = None
     stop: Optional[List[str]] = None
+
+
+class RegisterModelRequest(BaseModel):
+    """Регистрация специализированной модели"""
+
+    model_id: str = Field(..., description="Уникальный идентификатор модели")
+    model_path: str = Field(..., description="Путь к файлу модели")
+    domain: str = Field(..., description="Домен использования (finance, legal, bim и т.д.)")
+    priority: Optional[int] = None
+    ttl_seconds: Optional[int] = None
+    n_ctx: Optional[int] = None
+    n_gpu_layers: Optional[int] = None
+    parameters: Optional[Dict[str, Optional[Union[int, float, List[str]]]]] = None
 
 
 class ModelOperationResponse(BaseModel):
@@ -145,6 +158,15 @@ async def list_models(current_user: User = Depends(get_current_user)):
     }
 
 
+@router.get("/registry")
+async def list_registered_models(current_user: User = Depends(get_current_user)):
+    """Список всех зарегистрированных моделей с конфигурацией"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can view the registry")
+    return {"models": model_manager.list_registered_models()}
+
+
 @router.get("/models/{model_id}")
 async def get_model_info(
     model_id: str,
@@ -183,6 +205,32 @@ async def load_model(
         raise HTTPException(status_code=500, detail="Failed to load model")
     
     return ModelOperationResponse(status="loaded", model_id=model_id)
+
+
+@router.post("/models/register", response_model=ModelOperationResponse)
+async def register_model(
+    request: RegisterModelRequest,
+    current_user: User = Depends(get_current_user)
+) -> ModelOperationResponse:
+    """Регистрация конфигурации модели (без загрузки)"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can register models")
+
+    model_manager.register_model_config(
+        model_id=request.model_id,
+        config_data={
+            "path": request.model_path,
+            "priority": request.priority,
+            "ttl_seconds": request.ttl_seconds,
+            "n_ctx": request.n_ctx,
+            "n_gpu_layers": request.n_gpu_layers,
+            "domain": request.domain,
+            "parameters": request.parameters or {},
+        },
+    )
+
+    return ModelOperationResponse(status="registered", model_id=request.model_id)
 
 
 @router.post("/models/{model_id}/unload", response_model=ModelOperationResponse)
@@ -227,6 +275,36 @@ async def update_model_priority(
         raise HTTPException(status_code=404, detail="Model not found")
 
     return ModelOperationResponse(status="priority_updated", model_id=model_id)
+
+
+@router.get("/models/domain/{domain}")
+async def get_models_by_domain(
+    domain: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Список моделей по домену"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can query by domain")
+    models = model_manager.get_models_by_domain(domain)
+    return {"domain": domain, "models": models}
+
+
+@router.post("/models/domain/{domain}/load", response_model=ModelOperationResponse)
+async def load_model_by_domain(
+    domain: str,
+    current_user: User = Depends(get_current_user)
+) -> ModelOperationResponse:
+    """Загрузка первой доступной модели по домену"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can load by domain")
+
+    model_id = model_manager.load_model_by_domain(domain)
+    if not model_id:
+        raise HTTPException(status_code=404, detail="No model found for domain")
+
+    return ModelOperationResponse(status="loaded", model_id=model_id)
 
 
 @router.get(

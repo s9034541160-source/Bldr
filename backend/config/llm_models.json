@@ -5,9 +5,58 @@
     "ttl_seconds": 300,
     "n_ctx": 4096,
     "n_gpu_layers": 0,
+    "domain": "general",
     "parameters": {
       "max_tokens": 512,
       "temperature": 0.7,
+      "top_p": 0.9,
+      "top_k": 40,
+      "repeat_penalty": 1.1,
+      "stop": []
+    }
+  },
+  "finance": {
+    "path": "models/finance.gguf",
+    "priority": 5,
+    "ttl_seconds": 600,
+    "n_ctx": 4096,
+    "n_gpu_layers": 0,
+    "domain": "finance",
+    "parameters": {
+      "max_tokens": 512,
+      "temperature": 0.6,
+      "top_p": 0.85,
+      "top_k": 30,
+      "repeat_penalty": 1.15,
+      "stop": []
+    }
+  },
+  "legal": {
+    "path": "models/legal.gguf",
+    "priority": 5,
+    "ttl_seconds": 600,
+    "n_ctx": 4096,
+    "n_gpu_layers": 0,
+    "domain": "legal",
+    "parameters": {
+      "max_tokens": 512,
+      "temperature": 0.5,
+      "top_p": 0.85,
+      "top_k": 20,
+      "repeat_penalty": 1.2,
+      "stop": []
+    }
+  },
+  "bim": {
+    "path": "models/bim.gguf",
+    "priority": 5,
+    "ttl_seconds": 600,
+    "n_ctx": 4096,
+    "n_gpu_layers": 0,
+    "domain": "bim",
+    "parameters": {
+      "max_tokens": 512,
+      "temperature": 0.65,
       "top_p": 0.9,
       "top_k": 40,
       "repeat_penalty": 1.1,

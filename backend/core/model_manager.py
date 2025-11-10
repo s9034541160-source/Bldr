@@ -283,6 +283,8 @@ class ModelManager:
                 }
             )
             config.setdefault("parameters", self.get_generation_defaults(model_id))
+            if "domain" not in config:
+                config["domain"] = "general"
             self._save_config()
 
             self._enforce_capacity_limit()
@@ -457,8 +459,60 @@ class ModelManager:
             data["default_parameters"] = self.get_generation_defaults(model_id)
             data["n_ctx"] = config.get("n_ctx", getattr(entry.instance, "n_ctx", None))
             data["n_gpu_layers"] = config.get("n_gpu_layers", getattr(entry.instance, "n_gpu_layers", None))
+            data["domain"] = config.get("domain", "general")
             models_info.append(data)
         return models_info
+
+    def register_model_config(self, model_id: str, config_data: Dict[str, Any]) -> None:
+        """Регистрация или обновление конфигурации модели без загрузки"""
+        config = self.model_configs.setdefault(model_id, {})
+        config.update({
+            "path": config_data.get("path", config.get("path")),
+            "priority": config_data.get("priority", config.get("priority", 0)),
+            "ttl_seconds": config_data.get("ttl_seconds", config.get("ttl_seconds", self._default_ttl)),
+            "n_ctx": config_data.get("n_ctx", config.get("n_ctx", settings.LLM_CONTEXT_SIZE)),
+            "n_gpu_layers": config_data.get("n_gpu_layers", config.get("n_gpu_layers", settings.LLM_N_GPU_LAYERS)),
+            "domain": config_data.get("domain", config.get("domain", "general")),
+        })
+        if "parameters" in config_data and isinstance(config_data["parameters"], dict):
+            parameters = config.setdefault("parameters", self.get_generation_defaults(model_id))
+            parameters.update({k: v for k, v in config_data["parameters"].items() if v is not None})
+        config.setdefault("parameters", self.get_generation_defaults(model_id))
+        self._save_config()
+        logger.info("Model %s configuration registered/updated", model_id)
+
+    def get_models_by_domain(self, domain: str) -> List[str]:
+        """Получение списка моделей по домену"""
+        domain_lower = domain.lower()
+        return [
+            model_id
+            for model_id, cfg in self.model_configs.items()
+            if cfg.get("domain", "general").lower() == domain_lower
+        ]
+
+    def list_registered_models(self) -> Dict[str, Dict[str, Any]]:
+        """Получение всех зарегистрированных моделей"""
+        return self.model_configs
+
+    def load_model_by_domain(self, domain: str) -> Optional[str]:
+        """Загрузка модели по домену (первая подходящая)"""
+        candidates = self.get_models_by_domain(domain)
+        for model_id in candidates:
+            config = self.model_configs.get(model_id, {})
+            path = config.get("path")
+            if not path:
+                continue
+            success = self.load_model(
+                model_path=path,
+                model_id=model_id,
+                n_ctx=config.get("n_ctx"),
+                n_gpu_layers=config.get("n_gpu_layers"),
+                ttl_seconds=config.get("ttl_seconds"),
+                priority=config.get("priority"),
+            )
+            if success:
+                return model_id
+        return None
 
     def get_memory_usage(self) -> Dict[str, Any]:
         """Отчет по использованию памяти"""
