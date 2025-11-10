@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: Optional[str] = os.getenv("CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: Optional[str] = os.getenv("CELERY_RESULT_BACKEND")
     CELERY_DEFAULT_QUEUE: str = os.getenv("CELERY_DEFAULT_QUEUE", "bldr_default")
+    CELERY_MODEL_QUEUE: str = os.getenv("CELERY_MODEL_QUEUE", "models")
+    CELERY_DOCUMENT_QUEUE: str = os.getenv("CELERY_DOCUMENT_QUEUE", "documents")
+    CELERY_PROCESS_QUEUE: str = os.getenv("CELERY_PROCESS_QUEUE", "processes")
+    CELERY_MONITORING_QUEUE: str = os.getenv("CELERY_MONITORING_QUEUE", "monitoring")
     CELERY_TASK_TIME_LIMIT: int = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
     CELERY_TASK_SOFT_TIME_LIMIT: int = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
     CELERY_RESULT_EXPIRES: int = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
@@ -81,6 +85,7 @@ class Settings(BaseSettings):
     
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_WEBHOOK_URL: Optional[str] = os.getenv("TELEGRAM_WEBHOOK_URL")
     
     # Email intake (IMAP)
     IMAP_HOST: Optional[str] = os.getenv("IMAP_HOST")
@@ -98,6 +103,27 @@ class Settings(BaseSettings):
     # 1С Integration
     ONEC_API_URL: Optional[str] = os.getenv("ONEC_API_URL")
     ONEC_API_TOKEN: Optional[str] = os.getenv("ONEC_API_TOKEN")
+
+    # DeepSeek OCR / Unsloth
+    DEEPSEEK_OCR_MODEL: str = os.getenv("DEEPSEEK_OCR_MODEL", "deepseek-ai/DeepSeek-VL2")
+    DEEPSEEK_OCR_MAX_NEW_TOKENS: int = int(os.getenv("DEEPSEEK_OCR_MAX_NEW_TOKENS", "512"))
+    DEEPSEEK_OCR_PROMPT: str = os.getenv(
+        "DEEPSEEK_OCR_PROMPT",
+        "You are an accurate OCR assistant. Extract text from the provided image without explanations.",
+    )
+    DEEPSEEK_OCR_LOAD_IN_4BIT: bool = os.getenv("DEEPSEEK_OCR_LOAD_IN_4BIT", "True").lower() == "true"
+    DEEPSEEK_OCR_DEVICE: str = os.getenv("DEEPSEEK_OCR_DEVICE", "cuda")
+
+    UNSLOTH_DEFAULT_MODEL: str = os.getenv("UNSLOTH_DEFAULT_MODEL", "unsloth/llama-3-8b-Instruct-bnb-4bit")
+    UNSLOTH_OUTPUT_DIR: str = os.getenv("UNSLOTH_OUTPUT_DIR", "outputs/unsloth")
+    UNSLOTH_LORA_R: int = int(os.getenv("UNSLOTH_LORA_R", "16"))
+    UNSLOTH_LORA_ALPHA: int = int(os.getenv("UNSLOTH_LORA_ALPHA", "32"))
+    UNSLOTH_LORA_DROPOUT: float = float(os.getenv("UNSLOTH_LORA_DROPOUT", "0.05"))
+    UNSLOTH_MAX_SEQ_LENGTH: int = int(os.getenv("UNSLOTH_MAX_SEQ_LENGTH", "4096"))
+    UNSLOTH_BATCH_SIZE: int = int(os.getenv("UNSLOTH_BATCH_SIZE", "2"))
+    UNSLOTH_GRADIENT_ACCUMULATION: int = int(os.getenv("UNSLOTH_GRADIENT_ACCUMULATION", "8"))
+    UNSLOTH_LEARNING_RATE: float = float(os.getenv("UNSLOTH_LEARNING_RATE", "2e-4"))
+    UNSLOTH_EPOCHS: int = int(os.getenv("UNSLOTH_EPOCHS", "3"))
     
     class Config:
         env_file = ".env"

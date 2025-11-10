@@ -48,25 +48,28 @@ celery_app = Celery(
         "backend.tasks.document_tasks",
         "backend.tasks.process_tasks",
         "backend.tasks.system_tasks",
+        "backend.tasks.model_tasks",
     ],
 )
 
 queue_definitions = [
     QueueDefinition(name=settings.CELERY_DEFAULT_QUEUE, routing_key="default"),
-    QueueDefinition(name="documents", routing_key="documents"),
-    QueueDefinition(name="processes", routing_key="processes"),
-    QueueDefinition(name="monitoring", routing_key="monitoring"),
+    QueueDefinition(name=settings.CELERY_DOCUMENT_QUEUE, routing_key=settings.CELERY_DOCUMENT_QUEUE),
+    QueueDefinition(name=settings.CELERY_PROCESS_QUEUE, routing_key=settings.CELERY_PROCESS_QUEUE),
+    QueueDefinition(name=settings.CELERY_MONITORING_QUEUE, routing_key=settings.CELERY_MONITORING_QUEUE),
+    QueueDefinition(name=settings.CELERY_MODEL_QUEUE, routing_key=settings.CELERY_MODEL_QUEUE),
 ]
 
 celery_app.conf.update(
     task_default_queue=settings.CELERY_DEFAULT_QUEUE,
     task_queues=list(_build_queues(queue_definitions)),
     task_routes={
-        "documents.reindex_document": {"queue": "documents"},
-        "processes.poll_email_inbox": {"queue": "processes"},
-        "processes.ingest_google_form_submission": {"queue": "processes"},
-        "processes.ingest_telegram_update": {"queue": "processes"},
-        "system.health_check": {"queue": "monitoring"},
+        "documents.reindex_document": {"queue": settings.CELERY_DOCUMENT_QUEUE},
+        "processes.poll_email_inbox": {"queue": settings.CELERY_PROCESS_QUEUE},
+        "processes.ingest_google_form_submission": {"queue": settings.CELERY_PROCESS_QUEUE},
+        "processes.ingest_telegram_update": {"queue": settings.CELERY_PROCESS_QUEUE},
+        "system.health_check": {"queue": settings.CELERY_MONITORING_QUEUE},
+        "models.fine_tune_unsloth": {"queue": settings.CELERY_MODEL_QUEUE},
     },
     broker_connection_retry_on_startup=True,
     task_serializer="json",

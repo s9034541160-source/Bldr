@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from celery import signature
 
+from backend.config.settings import settings
 from backend.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class TaskQueue:
     ) -> TaskDispatchResult:
         return self.enqueue(
             task_name="documents.reindex_document",
-            queue="documents",
+            queue=settings.CELERY_DOCUMENT_QUEUE,
             kwargs={
                 "document_id": document_id,
                 "version_number": version_number,
@@ -73,8 +74,29 @@ class TaskQueue:
     def schedule_email_polling(self, *, limit: int = 25) -> TaskDispatchResult:
         return self.enqueue(
             task_name="processes.poll_email_inbox",
-            queue="processes",
+            queue=settings.CELERY_PROCESS_QUEUE,
             kwargs={"limit": limit},
+        )
+
+    def schedule_model_finetune(
+        self,
+        *,
+        dataset_path: str,
+        base_model_id: Optional[str] = None,
+        output_dir: Optional[str] = None,
+        extra_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> TaskDispatchResult:
+        payload = {
+            "dataset_path": dataset_path,
+            "base_model_id": base_model_id,
+            "output_dir": output_dir,
+        }
+        if extra_kwargs:
+            payload.update(extra_kwargs)
+        return self.enqueue(
+            task_name="models.fine_tune_unsloth",
+            queue=settings.CELERY_MODEL_QUEUE,
+            kwargs=payload,
         )
 
 

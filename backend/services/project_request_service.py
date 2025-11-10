@@ -7,17 +7,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from io import BytesIO
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from PIL import Image
-import pytesseract
 from sqlalchemy.orm import Session
 
 from backend.models.project_request import ProjectRequest
 from backend.services.intake.models import IncomingAttachment, IncomingRequest
 from backend.services.minio_service import minio_service
+from backend.services.ocr.deepseek_service import deepseek_ocr_service
 
 logger = logging.getLogger(__name__)
 
@@ -104,16 +102,13 @@ class ProjectRequestService:
         )
 
     def _perform_ocr(self, attachment: IncomingAttachment) -> Optional[str]:
-        if not attachment.content:
-            return None
-        if not attachment.content_type.startswith("image/"):
+        if not attachment.content or not attachment.content_type.startswith("image/"):
             return None
         try:
-            image = Image.open(BytesIO(attachment.content))
-            text = pytesseract.image_to_string(image, lang="rus+eng")
-            return text.strip() or None
+            text = deepseek_ocr_service.extract_text(attachment.content)
+            return text or None
         except Exception as exc:  # noqa: BLE001
-            logger.debug("OCR failed for %s: %s", attachment.filename, exc)
+            logger.debug("DeepSeek OCR failed for %s: %s", attachment.filename, exc)
             return None
 
 
