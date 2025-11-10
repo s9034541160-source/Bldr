@@ -39,6 +39,7 @@ class RAGService:
             "search_avg_latency_ms": 0.0,
             "rag_requests": 0,
             "rag_avg_latency_ms": 0.0,
+            "answer_generation_latency_ms": 0.0,
             "indexed_documents": 0,
             "indexed_chunks": 0,
             "last_error": None,
@@ -367,6 +368,7 @@ class RAGService:
         Returns:
             Ответ с источниками
         """
+        start_time = time.perf_counter()
         # Если документы не предоставлены, выполняем поиск
         if context_documents is None:
             context_documents = self.search(query, limit=5)
@@ -392,6 +394,8 @@ class RAGService:
             max_tokens=max_tokens,
             temperature=temperature
         )
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        self._record_metric("answer_generation_latency_ms", start_time)
         
         return {
             "answer": answer,
@@ -403,7 +407,8 @@ class RAGService:
                 }
                 for doc in context_documents
             ],
-            "query": query
+            "query": query,
+            "latency_ms": latency_ms,
         }
     
     def rag_query(
