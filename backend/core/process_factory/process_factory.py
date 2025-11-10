@@ -32,13 +32,14 @@ class ProcessSpecification:
 class ProcessFactory:
     """Фабрика для генерации кода бизнес-процессов"""
     
-    def __init__(self, base_path: str = "backend/modules"):
+    def __init__(self, base_path: str = "backend/modules", tests_path: str = "tests/processes"):
         """
         Args:
             base_path: Базовый путь для модулей процессов
         """
         self.base_path = Path(base_path)
         self.templates_path = Path("backend/core/process_factory/templates")
+        self.tests_path = Path(tests_path)
     
     def create_process(
         self,
@@ -52,6 +53,7 @@ class ProcessFactory:
         steps: Optional[List[Dict[str, Any]]] = None,
         validate: bool = True,
         register_git: bool = False,
+        generate_tests: bool = True,
     ) -> Dict[str, Any]:
         """
         Создание нового бизнес-процесса
@@ -89,6 +91,10 @@ class ProcessFactory:
             created_files.append(str(file_path))
             logger.info(f"Created {file_path}")
         
+        if generate_tests:
+            tests_created = self._generate_tests(process_id, process_name)
+            created_files.extend(tests_created)
+
         validation_report: Optional[Dict[str, Any]] = None
         if validate:
             validation_report = self.validate_process(process_dir)
@@ -462,6 +468,53 @@ result = agent.execute("task", {{"inputs": {{}}}})
                 }
             )
         return enriched_steps
+
+    def _generate_tests(self, process_id: str, process_name: str) -> List[str]:
+        """Генерация базовых тестов для процесса."""
+        class_name = self._to_class_name(process_id)
+        module_path = process_id.lower().replace(".", "_")
+        tests_dir = self.tests_path / module_path
+        tests_dir.mkdir(parents=True, exist_ok=True)
+
+        test_service_path = tests_dir / "test_service.py"
+        test_api_path = tests_dir / "test_api.py"
+
+        service_content = f'''"""
+Тесты сервиса процесса {process_id}: {process_name}
+"""
+
+from {self.base_path.as_posix().replace("/", ".")}.{module_path}.service import {class_name}Service
+
+
+def test_service_execute_returns_dict():
+    service = {class_name}Service()
+    result = service.execute({{}})  # type: ignore[arg-type]
+    assert isinstance(result, dict)
+    assert "status" in result
+'''
+        api_content = f'''"""
+Интеграционные тесты API процесса {process_id}: {process_name}
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.main import app
+
+
+@pytest.fixture()
+def client():
+    return TestClient(app)
+
+
+def test_process_endpoint_available(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+'''
+        test_service_path.write_text(service_content, encoding="utf-8")
+        test_api_path.write_text(api_content, encoding="utf-8")
+        logger.info("Generated tests for process %s", process_id)
+        return [str(test_service_path), str(test_api_path)]
 
     def validate_process(self, process_dir: Path | str) -> Dict[str, Any]:
         """Базовая валидация созданного процесса."""
