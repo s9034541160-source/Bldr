@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     UNSLOTH_GRADIENT_ACCUMULATION: int = int(os.getenv("UNSLOTH_GRADIENT_ACCUMULATION", "8"))
     UNSLOTH_LEARNING_RATE: float = float(os.getenv("UNSLOTH_LEARNING_RATE", "2e-4"))
     UNSLOTH_EPOCHS: int = int(os.getenv("UNSLOTH_EPOCHS", "3"))
+    UNSLOTH_GGUF_OUTTYPE: str = os.getenv("UNSLOTH_GGUF_OUTTYPE", "q4_0")
+    UNSLOTH_VALIDATION_MAX_TOKENS: int = int(os.getenv("UNSLOTH_VALIDATION_MAX_TOKENS", "256"))
+    UNSLOTH_VALIDATION_TEMPERATURE: float = float(os.getenv("UNSLOTH_VALIDATION_TEMPERATURE", "0.2"))
+    UNSLOTH_DEFAULT_VALIDATION_PROMPTS: str = os.getenv(
+        "UNSLOTH_DEFAULT_VALIDATION_PROMPTS",
+        "Кратко опиши ключевые выводы по документации||Перечисли основные разделы строительного проекта",
+    )
     
     class Config:
         env_file = ".env"

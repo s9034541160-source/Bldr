@@ -66,8 +66,8 @@ class TrainingDatasetBuilder:
         self.db.commit()
 
         config = dataset.config or {}
-        num_pairs = int(config.get("questions_per_chunk", 2))
-        max_examples = int(config.get("max_examples", 200))
+        num_pairs = int(config.get("questions_per_chunk", 5))
+        total_pairs_target = int(config.get("total_pairs_target", 0))
         qa_model_id = config.get("qa_model_id")
         prompt_template = config.get("prompt_template") or DEFAULT_PROMPT
 
@@ -79,8 +79,6 @@ class TrainingDatasetBuilder:
         source_documents = self._normalize_source_documents(dataset.source_documents)
 
         for item in source_documents:
-            if len(examples) >= max_examples:
-                break
             document = self.db.query(Document).filter(Document.id == item["document_id"]).one_or_none()
             if not document:
                 logger.warning("Document %s not found, skipping", item["document_id"])
@@ -91,9 +89,12 @@ class TrainingDatasetBuilder:
                 prompt_template=prompt_template,
                 qa_model_id=qa_model_id,
                 num_pairs=num_pairs,
-                max_examples=max_examples - len(examples),
+                max_examples=None,
             )
             examples.extend(doc_examples)
+            if total_pairs_target and len(examples) >= total_pairs_target:
+                logger.info("Reached target of %s examples, stopping dataset generation", total_pairs_target)
+                break
 
         if not examples:
             raise RuntimeError("No examples generated for dataset")
@@ -174,16 +175,12 @@ class TrainingDatasetBuilder:
 
         examples: List[Dict[str, Any]] = []
         for idx, chunk in enumerate(chunks):
-            if len(examples) >= max_examples:
-                break
             context = chunk.text.strip()
             if not context:
                 continue
             prompt = prompt_template.format(context=context, num_pairs=num_pairs)
             qa_pairs = self._generate_pairs(prompt, qa_model_id, expected=num_pairs)
             for pair in qa_pairs:
-                if len(examples) >= max_examples:
-                    break
                 examples.append(
                     {
                         "instruction": pair["question"],

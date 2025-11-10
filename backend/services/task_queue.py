@@ -96,6 +96,17 @@ class TaskQueue:
             kwargs={"job_id": job_id},
         )
 
+    def schedule_model_validation(
+        self,
+        *,
+        job_id: int,
+    ) -> TaskDispatchResult:
+        return self.enqueue(
+            task_name="training.validate_model",
+            queue=settings.CELERY_MODEL_QUEUE,
+            kwargs={"job_id": job_id},
+        )
+
 
 task_queue = TaskQueue()
 

@@ -14,6 +14,7 @@ from backend.middleware.rbac import get_current_user
 from backend.models import get_db
 from backend.models.auth import User
 from backend.models.training import TrainingDataset, TrainingJob
+from backend.services.minio_service import minio_service
 from backend.services.training.pipeline import TrainingPipelineService
 
 router = APIRouter(prefix="/training", tags=["training"])
@@ -24,7 +25,7 @@ class DatasetCreateRequest(BaseModel):
     description: Optional[str] = None
     document_ids: List[int]
     questions_per_chunk: int = Field(2, ge=1, le=10)
-    max_examples: int = Field(200, ge=1, le=2000)
+    total_pairs_target: Optional[int] = Field(0, ge=0)
     qa_model_id: Optional[str] = None
     prompt_template: Optional[str] = None
 
@@ -50,7 +51,9 @@ class DatasetResponse(BaseModel):
 class JobCreateRequest(BaseModel):
     dataset_id: int
     base_model_id: str
+    model_id: Optional[str] = None
     hyperparameters: Optional[Dict[str, Any]] = None
+    validation_prompts: Optional[List[str]] = None
 
 
 class JobResponse(BaseModel):
@@ -59,10 +62,23 @@ class JobResponse(BaseModel):
     base_model_id: str
     status: str
     metrics: Optional[Dict[str, Any]]
+    adapter_path: Optional[str]
+    artifact_path: Optional[str]
+    gguf_path: Optional[str]
+    model_id: Optional[str]
+    validation_status: Optional[str]
+    validation_metrics: Optional[Dict[str, Any]]
     created_at: Optional[str]
     started_at: Optional[str]
     completed_at: Optional[str]
     output_path: Optional[str]
+
+
+class JobArtifactsResponse(BaseModel):
+    job_id: int
+    model_id: Optional[str]
+    adapter_url: Optional[str]
+    gguf_url: Optional[str]
 
 
 def _ensure_admin(user: User) -> None:
@@ -92,6 +108,12 @@ def _job_to_response(job: TrainingJob) -> JobResponse:
         base_model_id=job.base_model_id,
         status=job.status,
         metrics=job.metrics,
+        adapter_path=job.adapter_path,
+        artifact_path=job.artifact_path,
+        gguf_path=job.gguf_path,
+        model_id=job.model_id,
+        validation_status=job.validation_status,
+        validation_metrics=job.validation_metrics,
         created_at=job.created_at.isoformat() if job.created_at else None,
         started_at=job.started_at.isoformat() if job.started_at else None,
         completed_at=job.completed_at.isoformat() if job.completed_at else None,
@@ -109,9 +131,10 @@ def create_dataset(
     service = TrainingPipelineService(db)
     config = {
         "questions_per_chunk": request.questions_per_chunk,
-        "max_examples": request.max_examples,
         "qa_model_id": request.qa_model_id,
     }
+    if request.total_pairs_target is not None:
+        config["total_pairs_target"] = request.total_pairs_target
     if request.prompt_template:
         config["prompt_template"] = request.prompt_template
     dataset = service.create_dataset(
@@ -157,7 +180,9 @@ def create_job(
     job = service.create_job(
         dataset_id=request.dataset_id,
         base_model_id=request.base_model_id,
+        model_id=request.model_id,
         hyperparameters=request.hyperparameters,
+        validation_prompts=request.validation_prompts,
     )
     return _job_to_response(job)
 
@@ -183,4 +208,38 @@ def get_job(
     service = TrainingPipelineService(db)
     job = service.get_job(job_id)
     return _job_to_response(job)
+
+
+@router.get("/jobs/{job_id}/artifacts", response_model=JobArtifactsResponse)
+def get_job_artifacts(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_admin(current_user)
+    job = (
+        db.query(TrainingJob)
+        .filter(TrainingJob.id == job_id)
+        .one_or_none()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found")
+
+    adapter_url = (
+        minio_service.get_file_url("models", job.adapter_path)
+        if job.adapter_path
+        else None
+    )
+    gguf_remote_path = job.gguf_path or job.artifact_path
+    gguf_url = (
+        minio_service.get_file_url("models", gguf_remote_path)
+        if gguf_remote_path
+        else None
+    )
+    return JobArtifactsResponse(
+        job_id=job.id,
+        model_id=job.model_id,
+        adapter_url=adapter_url,
+        gguf_url=gguf_url,
+    )
 

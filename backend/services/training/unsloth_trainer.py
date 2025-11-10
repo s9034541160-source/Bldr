@@ -42,7 +42,8 @@ class FineTuneRequest:
 
 @dataclass(slots=True, kw_only=True)
 class FineTuneResult:
-    model_path: str
+    adapter_dir: str
+    adapter_model_path: str
     tokenizer_path: str
     epochs_ran: int
     train_loss: Optional[float] = None
@@ -136,7 +137,8 @@ class UnslothFineTuner:
         logger.info("Unsloth training finished: %s", metrics)
 
         return FineTuneResult(
-            model_path=str(Path(config["output_dir"]) / "adapter_model.bin"),
+            adapter_dir=config["output_dir"],
+            adapter_model_path=str(Path(config["output_dir"]) / "adapter_model.bin"),
             tokenizer_path=config["output_dir"],
             epochs_ran=int(metrics.get("epoch", config["epochs"])),
             train_loss=metrics.get("train_loss"),

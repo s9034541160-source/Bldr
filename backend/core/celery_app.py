@@ -72,6 +72,7 @@ celery_app.conf.update(
         "training.build_dataset": {"queue": settings.CELERY_PROCESS_QUEUE},
         "system.health_check": {"queue": settings.CELERY_MONITORING_QUEUE},
         "models.fine_tune_unsloth": {"queue": settings.CELERY_MODEL_QUEUE},
+        "training.validate_model": {"queue": settings.CELERY_MODEL_QUEUE},
     },
     broker_connection_retry_on_startup=True,
     task_serializer="json",

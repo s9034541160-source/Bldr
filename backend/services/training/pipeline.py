@@ -32,6 +32,9 @@ class TrainingPipelineService:
         document_ids: List[int],
         config: Optional[Dict[str, Any]] = None,
     ) -> TrainingDataset:
+        config = config or {}
+        config.setdefault("questions_per_chunk", 5)
+        config.setdefault("total_pairs_target", 0)
         dataset = TrainingDataset(
             name=name,
             description=description,
@@ -72,17 +75,25 @@ class TrainingPipelineService:
         *,
         dataset_id: int,
         base_model_id: str,
+        model_id: Optional[str] = None,
         hyperparameters: Optional[Dict[str, Any]] = None,
+        validation_prompts: Optional[List[str]] = None,
     ) -> TrainingJob:
         dataset = self.get_dataset(dataset_id)
         if dataset.status != "ready":
             raise ValueError("Dataset must be in 'ready' status before fine-tuning")
 
+        clean_hyperparameters = hyperparameters.copy() if hyperparameters else {}
+        if validation_prompts:
+            clean_hyperparameters["validation_prompts"] = validation_prompts
+
         job = TrainingJob(
             dataset_id=dataset.id,
             base_model_id=base_model_id,
             status="queued",
-            hyperparameters=hyperparameters or {},
+            hyperparameters=clean_hyperparameters or {},
+            model_id=model_id,
+            validation_status="pending",
         )
         self.db.add(job)
         self.db.commit()
@@ -90,6 +101,8 @@ class TrainingPipelineService:
 
         dispatch = task_queue.schedule_model_finetune(job_id=job.id)
         job.task_id = dispatch.task_id
+        if validation_prompts is not None:
+            job.validation_status = "pending"
         self.db.commit()
         logger.info("Scheduled fine-tune job %s (task=%s)", job.id, dispatch.task_id)
         return job

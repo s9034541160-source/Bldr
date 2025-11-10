@@ -53,8 +53,15 @@ class TrainingJob(Base):
     task_id = Column(String, nullable=True, index=True)
     hyperparameters = Column(JSON, nullable=True)
     metrics = Column(JSON, nullable=True)
-    output_path = Column(String, nullable=True)  # local path to adapter/model
-    artifact_path = Column(String, nullable=True)  # path in MinIO or external storage
+    output_path = Column(String, nullable=True)  # local path to adapter/model (LoRA)
+    adapter_path = Column(String, nullable=True)  # remote storage path for adapter
+    merged_path = Column(String, nullable=True)  # local merged HF model dir
+    gguf_local_path = Column(String, nullable=True)
+    artifact_path = Column(String, nullable=True)  # remote path for GGUF artifact
+    gguf_path = Column(String, nullable=True)  # alias for remote gguf
+    model_id = Column(String, nullable=True, index=True)
+    validation_status = Column(String, default="pending", nullable=False)
+    validation_metrics = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)

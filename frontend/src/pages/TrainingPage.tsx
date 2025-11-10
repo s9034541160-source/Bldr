@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Card,
   Row,
@@ -17,7 +17,7 @@ import {
   Tooltip,
   Modal,
 } from 'antd'
-import { PlusOutlined, DeploymentUnitOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeploymentUnitOutlined, ThunderboltOutlined, DownloadOutlined } from '@ant-design/icons'
 import { documentsApi, Document } from '../api/documents'
 import {
   trainingApi,
@@ -39,9 +39,12 @@ const statusColor = (status: string) => {
   switch (status) {
     case 'ready':
     case 'completed':
+    case 'validated':
       return 'green'
     case 'building':
     case 'running':
+    case 'queued':
+    case 'pending':
       return 'blue'
     case 'failed':
       return 'red'
@@ -60,6 +63,7 @@ const TrainingPage = () => {
   const [jobForm] = Form.useForm()
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [loadingJobs, setLoadingJobs] = useState(false)
+  const [downloading, setDownloading] = useState<{ jobId: number; type: 'gguf' | 'adapter' } | null>(null)
 
   const loadDatasets = async () => {
     setLoadingDatasets(true)
@@ -111,7 +115,7 @@ const TrainingPage = () => {
         description: values.description,
         document_ids: values.document_ids,
         questions_per_chunk: values.questions_per_chunk,
-        max_examples: values.max_examples,
+        total_pairs_target: values.total_pairs_target,
         qa_model_id: values.qa_model_id,
         prompt_template: values.prompt_template,
       }
@@ -134,7 +138,14 @@ const TrainingPage = () => {
       const payload: CreateJobPayload = {
         dataset_id: values.dataset_id,
         base_model_id: values.base_model_id,
+        model_id: values.model_id,
         hyperparameters: values.hyperparameters ? JSON.parse(values.hyperparameters) : undefined,
+        validation_prompts: values.validation_prompts
+          ? values.validation_prompts
+              .split('\n')
+              .map((line: string) => line.trim())
+              .filter((line: string) => line.length > 0)
+          : undefined,
       }
       await trainingApi.createJob(payload)
       message.success('Задача дообучения запущена')
@@ -152,6 +163,26 @@ const TrainingPage = () => {
       message.error('Ошибка запуска дообучения: ' + (error.response?.data?.detail || error.message))
     }
   }
+
+  const handleDownloadArtifacts = useCallback(
+    async (jobId: number, type: 'gguf' | 'adapter') => {
+      setDownloading({ jobId, type })
+      try {
+        const artifacts = await trainingApi.getJobArtifacts(jobId)
+        const targetUrl = type === 'gguf' ? artifacts.gguf_url : artifacts.adapter_url
+        if (!targetUrl) {
+          message.warning('Артефакт для скачивания пока недоступен')
+          return
+        }
+        window.open(targetUrl, '_blank', 'noopener')
+      } catch (error: any) {
+        message.error('Не удалось получить ссылку на артефакты: ' + (error.response?.data?.detail || error.message))
+      } finally {
+        setDownloading(null)
+      }
+    },
+    []
+  )
 
   const readyDatasets = useMemo(
     () => datasets.filter((dataset) => dataset.status === 'ready'),
@@ -282,9 +313,35 @@ const TrainingPage = () => {
               dataIndex: 'base_model_id',
             },
             {
+              title: 'Идентификатор',
+              dataIndex: 'model_id',
+              render: (value) => value || '-',
+            },
+            {
               title: 'Статус',
               dataIndex: 'status',
               render: (status) => <Tag color={statusColor(status)}>{status}</Tag>,
+            },
+            {
+              title: 'Валидация',
+              render: (_, record) => (
+                <Space direction="vertical">
+                  <Tag color={statusColor(record.validation_status || 'pending')}>
+                    {record.validation_status || 'pending'}
+                  </Tag>
+                  {record.validation_metrics ? (
+                    <Tooltip
+                      title={
+                        <pre style={{ margin: 0, maxWidth: 400, whiteSpace: 'pre-wrap' }}>
+                          {JSON.stringify(record.validation_metrics, null, 2)}
+                        </pre>
+                      }
+                    >
+                      <Tag>Детали</Tag>
+                    </Tooltip>
+                  ) : null}
+                </Space>
+              ),
             },
             {
               title: 'Создан',
@@ -314,6 +371,31 @@ const TrainingPage = () => {
                   '-'
                 ),
             },
+            {
+              title: 'Артефакты',
+              render: (_, record) => (
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleDownloadArtifacts(record.id, 'gguf')}
+                    loading={downloading?.jobId === record.id && downloading?.type === 'gguf'}
+                    disabled={!record.gguf_path && !record.artifact_path}
+                  >
+                    GGUF
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleDownloadArtifacts(record.id, 'adapter')}
+                    loading={downloading?.jobId === record.id && downloading?.type === 'adapter'}
+                    disabled={!record.adapter_path}
+                  >
+                    LoRA
+                  </Button>
+                </Space>
+              ),
+            },
           ]}
         />
       </Card>
@@ -329,7 +411,7 @@ const TrainingPage = () => {
         <Form
           layout="vertical"
           form={datasetForm}
-          initialValues={{ questions_per_chunk: 2, max_examples: 200, prompt_template: DEFAULT_PROMPT }}
+          initialValues={{ questions_per_chunk: 5, total_pairs_target: 0, prompt_template: DEFAULT_PROMPT }}
         >
           <Form.Item
             name="name"
@@ -372,14 +454,12 @@ const TrainingPage = () => {
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="max_examples" label="Максимум примеров">
-            <Select>
-              {[100, 200, 400, 800].map((value) => (
-                <Option key={value} value={value}>
-                  {value}
-                </Option>
-              ))}
-            </Select>
+          <Form.Item
+            name="total_pairs_target"
+            label="Целевое количество Q/A (0 — без лимита)"
+            tooltip="Если указать 0, будет сгенерировано столько Q/A, сколько позволит контент."
+          >
+            <Input type="number" min={0} />
           </Form.Item>
           <Form.Item name="qa_model_id" label="Модель для генерации Q/A (опционально)">
             <Input placeholder="Например, default или document_agent" />
@@ -419,12 +499,22 @@ const TrainingPage = () => {
           >
             <Input placeholder="unsloth/llama-3-8b-Instruct-bnb-4bit" />
           </Form.Item>
+          <Form.Item name="model_id" label="Идентификатор новой модели">
+            <Input placeholder="finetune_custom_model" />
+          </Form.Item>
           <Form.Item
             name="hyperparameters"
             label="Гиперпараметры (JSON)"
             tooltip='Например: {"epochs": 3, "learning_rate": 2e-4}'
           >
             <Input.TextArea rows={4} placeholder='{"epochs": 3, "learning_rate": 2e-4}' />
+          </Form.Item>
+          <Form.Item
+            name="validation_prompts"
+            label="Промпты для валидации (по одному в строке)"
+            tooltip="Если оставить пустым, будут использованы стандартные проверки."
+          >
+            <Input.TextArea rows={3} placeholder="Опиши ключевые выводы...\nПеречисли основные разделы..." />
           </Form.Item>
         </Form>
       </Modal>

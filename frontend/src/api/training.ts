@@ -18,6 +18,12 @@ export interface TrainingJob {
   base_model_id: string
   status: string
   metrics?: Record<string, unknown>
+  adapter_path?: string
+  artifact_path?: string
+  gguf_path?: string
+  model_id?: string
+  validation_status?: string
+  validation_metrics?: Record<string, unknown>
   created_at?: string
   started_at?: string
   completed_at?: string
@@ -29,7 +35,7 @@ export interface CreateDatasetPayload {
   description?: string
   document_ids: number[]
   questions_per_chunk?: number
-  max_examples?: number
+  total_pairs_target?: number
   qa_model_id?: string
   prompt_template?: string
 }
@@ -37,7 +43,16 @@ export interface CreateDatasetPayload {
 export interface CreateJobPayload {
   dataset_id: number
   base_model_id: string
+  model_id?: string
   hyperparameters?: Record<string, unknown>
+  validation_prompts?: string[]
+}
+
+export interface TrainingJobArtifacts {
+  job_id: number
+  model_id?: string
+  adapter_url?: string
+  gguf_url?: string
 }
 
 export const trainingApi = {
@@ -55,6 +70,10 @@ export const trainingApi = {
   },
   createJob: async (payload: CreateJobPayload): Promise<TrainingJob> => {
     const response = await apiClient.post<TrainingJob>('/training/jobs', payload)
+    return response.data
+  },
+  getJobArtifacts: async (jobId: number): Promise<TrainingJobArtifacts> => {
+    const response = await apiClient.get<TrainingJobArtifacts>(`/training/jobs/${jobId}/artifacts`)
     return response.data
   },
 }
