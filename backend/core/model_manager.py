@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Iterator
 import logging
 import os
 
@@ -251,6 +251,49 @@ class ModelManager:
             logger.error(f"Generation failed: {e}")
             return None
     
+    def generate_stream(
+        self,
+        prompt: str,
+        model_id: Optional[str] = None,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 40,
+        repeat_penalty: float = 1.1,
+        stop: Optional[list] = None,
+    ) -> Optional[Iterator[str]]:
+        """Потоковая генерация текста"""
+        model = self.get_model(model_id)
+        if not model:
+            logger.error("No model available for streaming")
+            return None
+
+        def stream() -> Iterator[str]:
+            try:
+                completion_stream = model.create_completion(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repeat_penalty=repeat_penalty,
+                    stop=stop or [],
+                    stream=True,
+                )
+                for chunk in completion_stream:
+                    if not chunk:
+                        continue
+                    choices = chunk.get("choices")
+                    if not choices:
+                        continue
+                    delta = choices[0].get("text")
+                    if delta:
+                        yield delta
+            except Exception as exc:
+                logger.error(f"Streaming generation failed: {exc}")
+
+        return stream()
+
     def get_model_info(self, model_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Получение информации о модели"""
         self._cleanup_expired_models()

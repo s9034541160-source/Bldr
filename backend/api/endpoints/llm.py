@@ -3,6 +3,7 @@ API эндпоинты для работы с LLM
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from backend.config.settings import settings
@@ -82,6 +83,27 @@ async def generate_text(
     except Exception as e:
         logger.error(f"Generation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate/stream")
+async def generate_text_stream(
+    request: GenerateRequest,
+    current_user: User = Depends(get_current_user)
+) -> StreamingResponse:
+    """Потоковая генерация текста через LLM"""
+    generator = model_manager.generate_stream(
+        prompt=request.prompt,
+        model_id=request.model_id,
+        max_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=request.top_k,
+    )
+
+    if not generator:
+        raise HTTPException(status_code=500, detail="Streaming generation failed")
+
+    return StreamingResponse(generator, media_type="text/plain")
 
 
 @router.get("/models")
