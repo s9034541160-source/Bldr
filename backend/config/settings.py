@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     RAG_PARALLEL_WORKERS: int = int(os.getenv("RAG_PARALLEL_WORKERS", "4"))
     RAG_ENABLE_QUANTIZATION: bool = os.getenv("RAG_ENABLE_QUANTIZATION", "True").lower() == "true"
     RAG_QUANTIZATION_QUANTILE: float = float(os.getenv("RAG_QUANTIZATION_QUANTILE", "0.99"))
+    RAG_CACHE_TTL_SECONDS: int = int(os.getenv("RAG_CACHE_TTL_SECONDS", "3600"))
     
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")

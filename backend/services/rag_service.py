@@ -2,11 +2,13 @@
 Сервис RAG (Retrieval-Augmented Generation)
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Iterable
+import json
 import logging
 import hashlib
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import List, Dict, Any, Optional, Iterable, Tuple
 
 from sentence_transformers import SentenceTransformer
 from qdrant_client.models import PointStruct
@@ -15,6 +17,7 @@ from backend.config.settings import settings
 from backend.services.qdrant_service import qdrant_service
 from backend.core.model_manager import model_manager
 from backend.services.document_parser import get_document_parser, DocumentChunk
+from backend.services.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ class RAGService:
         self.document_parser = get_document_parser()
         self.batch_size = settings.RAG_BATCH_SIZE
         self.parallel_workers = settings.RAG_PARALLEL_WORKERS
+        self.cache_ttl = settings.RAG_CACHE_TTL_SECONDS
+        self._local_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
     
     def _load_embedding_model(self):
         """Загрузка модели для эмбеддингов"""
@@ -69,6 +74,54 @@ class RAGService:
             vector=embedding,
             payload=payload,
         )
+
+    def _build_cache_key(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float,
+        filter_dict: Optional[Dict[str, Any]],
+    ) -> str:
+        filter_serialized = json.dumps(filter_dict or {}, sort_keys=True, ensure_ascii=False)
+        raw_key = f"{query}|{limit}|{score_threshold}|{filter_serialized}"
+        return hashlib.md5(raw_key.encode("utf-8")).hexdigest()
+
+    def _get_cached_result(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        # Redis cache
+        try:
+            cached = redis_service.get(cache_key)
+            if cached:
+                if isinstance(cached, bytes):
+                    cached = cached.decode("utf-8")
+                return json.loads(cached)
+        except Exception as exc:
+            logger.debug("Redis cache unavailable (%s), falling back to local cache", exc)
+
+        # Local in-memory fallback
+        now = time.time()
+        entry = self._local_cache.get(cache_key)
+        if not entry:
+            return None
+        expires_at, data = entry
+        if expires_at < now:
+            self._local_cache.pop(cache_key, None)
+            return None
+        return data
+
+    def _store_cached_result(self, cache_key: str, data: List[Dict[str, Any]]) -> None:
+        if not data:
+            return
+        serialized = json.dumps(data, ensure_ascii=False)
+        expire_at = time.time() + self.cache_ttl
+
+        # Store in Redis
+        try:
+            redis_service.set(cache_key, serialized, ex=self.cache_ttl)
+        except Exception as exc:
+            logger.debug("Redis cache set failed (%s); using local cache only", exc)
+
+        # Store in local fallback
+        self._local_cache[cache_key] = (expire_at, data)
 
     def index_document(
         self,
@@ -226,6 +279,17 @@ class RAGService:
         Returns:
             Список найденных документов с метаданными
         """
+        cache_key = self._build_cache_key(
+            query=query,
+            limit=limit,
+            score_threshold=score_threshold,
+            filter_dict=filter_dict,
+        )
+        cached = self._get_cached_result(cache_key)
+        if cached is not None:
+            logger.debug("RAG search cache hit for key %s", cache_key)
+            return cached
+
         try:
             # Создание эмбеддинга для запроса
             query_embedding = self.create_embedding(query)
@@ -250,6 +314,7 @@ class RAGService:
                                    if k not in ["document_id", "text"]}
                     })
             
+            self._store_cached_result(cache_key, formatted_results)
             return formatted_results
             
         except Exception as e:
