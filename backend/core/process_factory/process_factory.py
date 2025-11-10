@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import subprocess
 
 from openpyxl import load_workbook
 
@@ -48,7 +49,9 @@ class ProcessFactory:
         process_type: str = "standard",
         inputs: Optional[List[Dict[str, str]]] = None,
         outputs: Optional[List[Dict[str, str]]] = None,
-        steps: Optional[List[Dict[str, Any]]] = None
+        steps: Optional[List[Dict[str, Any]]] = None,
+        validate: bool = True,
+        register_git: bool = False,
     ) -> Dict[str, Any]:
         """
         Создание нового бизнес-процесса
@@ -86,11 +89,19 @@ class ProcessFactory:
             created_files.append(str(file_path))
             logger.info(f"Created {file_path}")
         
+        validation_report: Optional[Dict[str, Any]] = None
+        if validate:
+            validation_report = self.validate_process(process_dir)
+
+        if register_git:
+            self.register_process_in_git(created_files)
+
         return {
             "process_id": process_id,
             "process_name": process_name,
             "directory": str(process_dir),
-            "files": created_files
+            "files": created_files,
+            "validation": validation_report,
         }
     
     def create_process_from_spec(self, spec: ProcessSpecification) -> Dict[str, Any]:
@@ -103,6 +114,8 @@ class ProcessFactory:
             inputs=spec.inputs,
             outputs=spec.outputs,
             steps=spec.steps,
+            validate=True,
+            register_git=False,
         )
 
     def create_process_from_excel(self, excel_path: str | Path) -> Dict[str, Any]:
@@ -449,6 +462,40 @@ result = agent.execute("task", {{"inputs": {{}}}})
                 }
             )
         return enriched_steps
+
+    def validate_process(self, process_dir: Path | str) -> Dict[str, Any]:
+        """Базовая валидация созданного процесса."""
+        process_path = Path(process_dir)
+        results: Dict[str, Any] = {"directory": str(process_path), "files": []}
+        required_files = {"__init__.py", "agent.py", "schemas.py", "service.py", "api.py", "README.md"}
+
+        for path in process_path.glob("*.py"):
+            status = {"file": str(path), "exists": True, "compiled": True}
+            try:
+                compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            except SyntaxError as exc:
+                status["compiled"] = False
+                status["error"] = str(exc)
+            results["files"].append(status)
+
+        for name in required_files:
+            file_path = process_path / name
+            if not file_path.exists():
+                results.setdefault("missing", []).append(str(file_path))
+
+        results["status"] = "ok" if not results.get("missing") and all(f["compiled"] for f in results["files"]) else "attention"
+        logger.info("Validation report for %s: %s", process_path, results["status"])
+        return results
+
+    def register_process_in_git(self, file_paths: List[str]) -> None:
+        """Добавление созданных файлов в git-индекс."""
+        if not file_paths:
+            return
+        try:
+            subprocess.run(["git", "add", *file_paths], check=True)
+            logger.info("Registered process files in git: %s", file_paths)
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            logger.warning("Failed to register files in git: %s", exc)
 
     def _to_class_name(self, process_id: str) -> str:
         """Преобразование ID процесса в имя класса"""
