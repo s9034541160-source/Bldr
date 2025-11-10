@@ -8,6 +8,8 @@ export interface Document {
   version: number
   status: string
   created_at: string
+  mime_type?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface DocumentVersion {
@@ -18,8 +20,28 @@ export interface DocumentVersion {
   changed_by: number
 }
 
+export interface DocumentComparison {
+  document_id: number
+  base_version: {
+    version_number: number
+    file_hash: string
+    file_size: number
+    change_description: string
+    created_at: string | null
+  }
+  target_version: {
+    version_number: number
+    file_hash: string
+    file_size: number
+    change_description: string
+    created_at: string | null
+  }
+  hash_equal: boolean
+  size_difference: number
+  diff_preview: string[]
+}
+
 export const documentsApi = {
-  // Получение списка документов
   getDocuments: async (params?: {
     query?: string
     document_type?: string
@@ -32,14 +54,18 @@ export const documentsApi = {
     return response.data
   },
 
-  // Получение документа по ID
   getDocument: async (id: number) => {
     const response = await apiClient.get<Document>(`/sod/documents/${id}`)
     return response.data
   },
 
-  // Загрузка документа
-  uploadDocument: async (file: File, title: string, documentType: string, projectId?: number) => {
+  uploadDocument: async (
+    file: File,
+    title: string,
+    documentType: string,
+    projectId?: number,
+    onUploadProgress?: (event: ProgressEvent) => void,
+  ) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('title', title)
@@ -52,11 +78,11 @@ export const documentsApi = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress,
     })
     return response.data
   },
 
-  // Скачивание документа
   downloadDocument: async (id: number, version?: number) => {
     const params = version ? { version } : {}
     const response = await apiClient.get(`/sod/documents/${id}/download`, {
@@ -66,13 +92,11 @@ export const documentsApi = {
     return response.data
   },
 
-  // Получение версий документа
   getDocumentVersions: async (id: number) => {
     const response = await apiClient.get<DocumentVersion[]>(`/sod/documents/${id}/versions`)
     return response.data
   },
 
-  // Создание новой версии
   createVersion: async (id: number, file: File, changeDescription: string) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -86,17 +110,25 @@ export const documentsApi = {
     return response.data
   },
 
-  // Откат к версии
   revertToVersion: async (id: number, versionNumber: number) => {
-    const response = await apiClient.post(`/sod/documents/${id}/revert`, {
-      version_number: versionNumber,
-    })
+    const form = new FormData()
+    form.append('version_number', versionNumber.toString())
+    const response = await apiClient.post(`/sod/documents/${id}/revert`, form)
     return response.data
   },
 
-  // Удаление документа
   deleteDocument: async (id: number) => {
     await apiClient.delete(`/sod/documents/${id}`)
+  },
+
+  compareVersions: async (id: number, baseVersion: number, targetVersion: number) => {
+    const response = await apiClient.get<DocumentComparison>(`/sod/documents/${id}/compare`, {
+      params: {
+        base_version: baseVersion,
+        target_version: targetVersion,
+      },
+    })
+    return response.data
   },
 }
 
