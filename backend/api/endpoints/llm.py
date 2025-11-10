@@ -5,7 +5,7 @@ API эндпоинты для работы с LLM
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from backend.config.settings import settings
 from backend.core.model_manager import model_manager
 from backend.middleware.rbac import get_current_user
@@ -21,10 +21,12 @@ class GenerateRequest(BaseModel):
     """Запрос на генерацию текста"""
     prompt: str
     model_id: Optional[str] = None
-    max_tokens: int = 512
-    temperature: float = 0.7
-    top_p: float = 0.9
-    top_k: int = 40
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repeat_penalty: Optional[float] = None
+    stop: Optional[List[str]] = None
 
 
 class GenerateResponse(BaseModel):
@@ -50,6 +52,28 @@ class UpdatePriorityRequest(BaseModel):
     priority: int
 
 
+class GenerationParametersResponse(BaseModel):
+    """Параметры генерации модели"""
+
+    max_tokens: int
+    temperature: float
+    top_p: float
+    top_k: int
+    repeat_penalty: float
+    stop: List[str]
+
+
+class UpdateGenerationParametersRequest(BaseModel):
+    """Обновление параметров генерации"""
+
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repeat_penalty: Optional[float] = None
+    stop: Optional[List[str]] = None
+
+
 class ModelOperationResponse(BaseModel):
     """Ответ на операции с моделью"""
 
@@ -70,7 +94,9 @@ async def generate_text(
             max_tokens=request.max_tokens,
             temperature=request.temperature,
             top_p=request.top_p,
-            top_k=request.top_k
+            top_k=request.top_k,
+            repeat_penalty=request.repeat_penalty,
+            stop=request.stop,
         )
         
         if not text:
@@ -98,6 +124,8 @@ async def generate_text_stream(
         temperature=request.temperature,
         top_p=request.top_p,
         top_k=request.top_k,
+        repeat_penalty=request.repeat_penalty,
+        stop=request.stop,
     )
 
     if not generator:
@@ -199,4 +227,45 @@ async def update_model_priority(
         raise HTTPException(status_code=404, detail="Model not found")
 
     return ModelOperationResponse(status="priority_updated", model_id=model_id)
+
+
+@router.get(
+    "/models/{model_id}/parameters",
+    response_model=GenerationParametersResponse,
+)
+async def get_model_parameters(
+    model_id: str,
+    current_user: User = Depends(get_current_user)
+) -> GenerationParametersResponse:
+    """Получение параметров генерации модели"""
+    defaults = model_manager.get_generation_defaults(model_id)
+    return GenerationParametersResponse(
+        max_tokens=defaults["max_tokens"],
+        temperature=defaults["temperature"],
+        top_p=defaults["top_p"],
+        top_k=defaults["top_k"],
+        repeat_penalty=defaults["repeat_penalty"],
+        stop=defaults.get("stop", []),
+    )
+
+
+@router.post("/models/{model_id}/parameters", response_model=ModelOperationResponse)
+async def update_model_parameters(
+    model_id: str,
+    request: UpdateGenerationParametersRequest,
+    current_user: User = Depends(get_current_user)
+) -> ModelOperationResponse:
+    """Обновление параметров генерации модели"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can update parameters")
+
+    updated = model_manager.update_generation_parameters(
+        model_id,
+        request.dict(exclude_none=True),
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="No parameters were updated")
+
+    return ModelOperationResponse(status="parameters_updated", model_id=model_id)
 

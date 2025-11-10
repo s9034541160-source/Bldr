@@ -4,9 +4,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Iterator
 import logging
 import os
+import json
 
 from llama_cpp import Llama
 
@@ -62,11 +64,97 @@ class ModelManager:
         self.current_model: Optional[str] = None
         self._max_models: int = max(1, settings.LLM_MAX_LOADED_MODELS)
         self._default_ttl: int = max(0, settings.LLM_MODEL_TTL_SECONDS)
+        self._config_path: Path = Path(settings.LLM_CONFIG_PATH).resolve()
+        self.model_configs: Dict[str, Dict[str, Any]] = self._load_config()
 
     def _update_settings_cache(self) -> None:
         """Обновление настроек TTL и лимита моделей"""
         self._max_models = max(1, settings.LLM_MAX_LOADED_MODELS)
         self._default_ttl = max(0, settings.LLM_MODEL_TTL_SECONDS)
+        # Перезагружаем конфиг, если он был изменён снаружи
+        self.model_configs = self._load_config()
+
+    def _load_config(self) -> Dict[str, Dict[str, Any]]:
+        """Загрузка конфигурации моделей из файла"""
+        try:
+            if self._config_path.exists():
+                with self._config_path.open("r", encoding="utf-8") as config_file:
+                    data = json.load(config_file)
+                    if isinstance(data, dict):
+                        return data
+            else:
+                logger.info("LLM config file not found at %s, using defaults", self._config_path)
+        except Exception as exc:
+            logger.error("Failed to load LLM config: %s", exc)
+        return {}
+
+    def _save_config(self) -> None:
+        """Сохранение конфигурации моделей в файл"""
+        try:
+            self._config_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._config_path.open("w", encoding="utf-8") as config_file:
+                json.dump(self.model_configs, config_file, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            logger.error("Failed to save LLM config: %s", exc)
+
+    def _get_model_config(self, model_id: Optional[str]) -> Dict[str, Any]:
+        """Получение конфигурации модели"""
+        if not model_id:
+            model_id = self.current_model
+        if not model_id:
+            return {}
+        return self.model_configs.get(model_id, {})
+
+    def get_generation_defaults(self, model_id: Optional[str] = None) -> Dict[str, Any]:
+        """Возвращает параметры генерации по умолчанию"""
+        defaults = {
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repeat_penalty": 1.1,
+            "stop": [],
+        }
+        config = self._get_model_config(model_id)
+        params = config.get("parameters", {})
+        for key in ("max_tokens", "temperature", "top_p", "top_k", "repeat_penalty", "stop"):
+            if key in params and params[key] is not None:
+                defaults[key] = params[key]
+        if defaults["stop"] is None:
+            defaults["stop"] = []
+        return defaults
+
+    def update_generation_parameters(self, model_id: str, parameters: Dict[str, Any]) -> bool:
+        """Обновление параметров генерации в конфигурации"""
+        if not parameters:
+            return False
+        config = self.model_configs.setdefault(model_id, {})
+        config_params = config.setdefault("parameters", {})
+        changed = False
+        for key, value in parameters.items():
+            if value is None:
+                continue
+            if config_params.get(key) != value:
+                config_params[key] = value
+                changed = True
+        if changed:
+            self._save_config()
+            logger.info("Model %s generation parameters updated: %s", model_id, parameters)
+        return changed
+
+    def _resolve_generation_params(
+        self,
+        model_id: Optional[str],
+        overrides: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Комбинация параметров генерации из конфига и переопределений"""
+        params = self.get_generation_defaults(model_id).copy()
+        for key, value in overrides.items():
+            if value is not None:
+                params[key] = value
+        if params.get("stop") is None:
+            params["stop"] = []
+        return params
 
     def _cleanup_expired_models(self) -> None:
         """Автоматическая выгрузка моделей, просроченных по TTL"""
@@ -143,10 +231,21 @@ class ModelManager:
             
             logger.info(f"Loading model {model_id} from {model_path}")
             
+            config = self._get_model_config(model_id)
+
+            context_size = n_ctx or config.get("n_ctx") or settings.LLM_CONTEXT_SIZE
+            gpu_layers = n_gpu_layers if n_gpu_layers is not None else config.get("n_gpu_layers", settings.LLM_N_GPU_LAYERS)
+            ttl_value = (
+                max(0, config.get("ttl_seconds", self._default_ttl))
+                if ttl_seconds is None
+                else max(0, ttl_seconds)
+            )
+            priority_value = priority if priority is not None else config.get("priority", 0)
+
             model = Llama(
                 model_path=model_path,
-                n_ctx=n_ctx,
-                n_gpu_layers=n_gpu_layers,
+                n_ctx=context_size,
+                n_gpu_layers=gpu_layers,
                 verbose=verbose
             )
             
@@ -167,12 +266,24 @@ class ModelManager:
                 last_accessed=datetime.utcnow(),
                 ttl_seconds=ttl_value,
                 memory_size_bytes=memory_size,
-                priority=priority if priority is not None else 0,
+                priority=priority_value,
             )
 
             self.models[model_id] = entry
             if not self.current_model:
                 self.current_model = model_id
+            config = self.model_configs.setdefault(model_id, {})
+            config.update(
+                {
+                    "path": model_path,
+                    "priority": priority_value,
+                    "ttl_seconds": ttl_value,
+                    "n_ctx": context_size,
+                    "n_gpu_layers": gpu_layers,
+                }
+            )
+            config.setdefault("parameters", self.get_generation_defaults(model_id))
+            self._save_config()
 
             self._enforce_capacity_limit()
             
@@ -205,11 +316,11 @@ class ModelManager:
         self,
         prompt: str,
         model_id: Optional[str] = None,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        top_k: int = 40,
-        repeat_penalty: float = 1.1,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
         stop: Optional[list] = None
     ) -> Optional[str]:
         """
@@ -231,14 +342,25 @@ class ModelManager:
             return None
         
         try:
+            params = self._resolve_generation_params(
+                model_id,
+                {
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "repeat_penalty": repeat_penalty,
+                    "stop": stop,
+                },
+            )
             response = model(
                 prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repeat_penalty=repeat_penalty,
-                stop=stop or []
+                max_tokens=params["max_tokens"],
+                temperature=params["temperature"],
+                top_p=params["top_p"],
+                top_k=params["top_k"],
+                repeat_penalty=params["repeat_penalty"],
+                stop=params.get("stop") or []
             )
             
             # Извлечение текста из ответа
@@ -255,11 +377,11 @@ class ModelManager:
         self,
         prompt: str,
         model_id: Optional[str] = None,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        top_k: int = 40,
-        repeat_penalty: float = 1.1,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
         stop: Optional[list] = None,
     ) -> Optional[Iterator[str]]:
         """Потоковая генерация текста"""
@@ -270,14 +392,25 @@ class ModelManager:
 
         def stream() -> Iterator[str]:
             try:
+                params = self._resolve_generation_params(
+                    model_id,
+                    {
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "top_k": top_k,
+                        "repeat_penalty": repeat_penalty,
+                        "stop": stop,
+                    },
+                )
                 completion_stream = model.create_completion(
                     prompt=prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    top_k=top_k,
-                    repeat_penalty=repeat_penalty,
-                    stop=stop or [],
+                    max_tokens=params["max_tokens"],
+                    temperature=params["temperature"],
+                    top_p=params["top_p"],
+                    top_k=params["top_k"],
+                    repeat_penalty=params["repeat_penalty"],
+                    stop=params.get("stop") or [],
                     stream=True,
                 )
                 for chunk in completion_stream:
@@ -317,10 +450,15 @@ class ModelManager:
     def list_models(self) -> List[Dict[str, Any]]:
         """Список загруженных моделей"""
         self._cleanup_expired_models()
-        return [
-            entry.to_dict(model_id)
-            for model_id, entry in self.models.items()
-        ]
+        models_info: List[Dict[str, Any]] = []
+        for model_id, entry in self.models.items():
+            data = entry.to_dict(model_id)
+            config = self._get_model_config(model_id)
+            data["default_parameters"] = self.get_generation_defaults(model_id)
+            data["n_ctx"] = config.get("n_ctx", getattr(entry.instance, "n_ctx", None))
+            data["n_gpu_layers"] = config.get("n_gpu_layers", getattr(entry.instance, "n_gpu_layers", None))
+            models_info.append(data)
+        return models_info
 
     def get_memory_usage(self) -> Dict[str, Any]:
         """Отчет по использованию памяти"""
@@ -346,6 +484,10 @@ class ModelManager:
             return False
         entry.priority = priority
         entry.touch()
+        config = self.model_configs.setdefault(model_id, {})
+        if config.get("priority") != priority:
+            config["priority"] = priority
+            self._save_config()
         logger.info("Model %s priority set to %s", model_id, priority)
         return True
 
