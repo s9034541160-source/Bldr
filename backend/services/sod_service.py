@@ -2,7 +2,8 @@
 Сервис для работы с СОД (Среда общих данных)
 """
 
-from typing import Dict, Any, List, Optional
+from io import BytesIO
+from typing import Dict, Any, List, Optional, BinaryIO
 from sqlalchemy.orm import Session
 from backend.models.document import Document, DocumentVersion, DocumentMetadata
 from backend.models.project import Project
@@ -25,8 +26,12 @@ class SODService:
     def create_document(
         self,
         title: str,
+        *,
         file_name: str,
-        file_data: bytes,
+        file_data: Optional[bytes] = None,
+        file_stream: Optional[BinaryIO] = None,
+        file_size: Optional[int] = None,
+        file_hash: Optional[str] = None,
         document_type: str,
         project_id: Optional[int] = None,
         created_by: int = 1,
@@ -45,8 +50,29 @@ class SODService:
             created_by: ID создателя
             metadata: Дополнительные метаданные
         """
-        # Вычисление хеша файла
-        file_hash = hashlib.sha256(file_data).hexdigest()
+        if file_data is None and file_stream is None:
+            raise ValueError("Either file_data or file_stream must be provided")
+
+        stream: BinaryIO
+        if file_data is not None:
+            stream = BytesIO(file_data)
+            file_size = len(file_data)
+            file_hash = hashlib.sha256(file_data).hexdigest()
+        else:
+            if file_size is None:
+                raise ValueError("file_size is required when using streaming uploads")
+            stream = file_stream  # type: ignore[assignment]
+            if file_hash is None:
+                hasher = hashlib.sha256()
+                current_pos = stream.tell() if hasattr(stream, "tell") else None
+                while chunk := stream.read(1024 * 1024):
+                    hasher.update(chunk)
+                file_hash = hasher.hexdigest()
+                if hasattr(stream, "seek") and current_pos is not None:
+                    stream.seek(current_pos)
+            else:
+                if hasattr(stream, "seek"):
+                    stream.seek(0)
         
         # Определение MIME типа
         mime_type = self._detect_mime_type(file_name)
@@ -56,12 +82,17 @@ class SODService:
         file_path = f"{document_type}/{timestamp}/{file_hash[:8]}/{file_name}"
         
         # Загрузка файла в MinIO
+        metadata_payload = {"title": title, "document_type": document_type, **(metadata or {})}
+        if hasattr(stream, "seek"):
+            stream.seek(0)
         minio_service.upload_file(
             bucket_name="documents",
             object_name=file_path,
             data=file_data,
+            data_stream=stream if file_data is None else None,
+            length=file_size,
             content_type=mime_type,
-            metadata={"title": title, "document_type": document_type}
+            metadata=metadata_payload,
         )
         
         # Классификация документа
@@ -72,7 +103,9 @@ class SODService:
         
         # Извлечение метаданных
         extracted_metadata = document_classifier.extract_metadata(
-            file_name=file_name
+            file_name=file_name,
+            file_path=file_path,
+            mime_type=mime_type,
         )
         
         # Объединение метаданных
@@ -91,7 +124,7 @@ class SODService:
             title=title,
             file_name=file_name,
             file_path=file_path,
-            file_size=len(file_data),
+            file_size=file_size,
             mime_type=mime_type,
             document_type=document_type,
             project_id=project_id,
@@ -166,7 +199,9 @@ class SODService:
             document_id=document_id,
             file_data=file_data,
             change_description=f"Reverted to version {version_number}",
-            changed_by=reverted_by
+            changed_by=reverted_by,
+            file_name=document.file_name,
+            mime_type=document.mime_type
         )
         
         logger.info(f"Reverted document {document_id} to version {version_number}")

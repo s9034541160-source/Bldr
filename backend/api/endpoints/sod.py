@@ -67,17 +67,31 @@ async def create_document(
     db: Session = Depends(get_db)
 ):
     """Создание нового документа"""
+    from tempfile import SpooledTemporaryFile
+    import hashlib
+
+    chunk_size = 1024 * 1024
+    hasher = hashlib.sha256()
+    spooled_file = SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+
     try:
-        file_data = await file.read()
-        
+        while chunk := await file.read(chunk_size):
+            hasher.update(chunk)
+            spooled_file.write(chunk)
+
+        file_size = spooled_file.tell()
+        spooled_file.seek(0)
+
         service = SODService(db)
         document = service.create_document(
             title=title,
             file_name=file.filename or "unknown",
-            file_data=file_data,
+            file_stream=spooled_file,
+            file_size=file_size,
+            file_hash=hasher.hexdigest(),
             document_type=document_type,
             project_id=project_id,
-            created_by=current_user.id
+            created_by=current_user.id,
         )
         
         return DocumentResponse(
@@ -92,6 +106,8 @@ async def create_document(
     except Exception as e:
         logger.error(f"Document creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        spooled_file.close()
 
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)

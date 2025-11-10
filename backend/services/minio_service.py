@@ -2,12 +2,16 @@
 Сервис для работы с MinIO (S3-compatible storage)
 """
 
-from minio import Minio
-from minio.error import S3Error
-from backend.config.settings import settings
+from __future__ import annotations
+
 import logging
 from io import BytesIO
-from typing import Optional
+from typing import Optional, BinaryIO
+
+from minio import Minio
+from minio.error import S3Error
+
+from backend.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,25 +55,54 @@ class MinIOService:
             except Exception as e:
                 logger.error(f"Failed to create bucket {bucket}: {e}")
     
-    def upload_file(self, bucket_name: str, object_name: str, 
-                   data: bytes, content_type: str = "application/octet-stream",
-                   metadata: Optional[dict] = None):
-        """Загрузка файла"""
-        try:
-            data_stream = BytesIO(data)
+    def upload_file(
+        self,
+        *,
+        bucket_name: str,
+        object_name: str,
+        data: Optional[bytes] = None,
+        data_stream: Optional[BinaryIO] = None,
+        length: Optional[int] = None,
+        content_type: str = "application/octet-stream",
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """Загрузка файла (поддерживает потоковую передачу для больших файлов)"""
+        if data is None and data_stream is None:
+            raise ValueError("Either data or data_stream must be provided")
+
+        stream: BinaryIO
+        if data is not None:
+            stream = BytesIO(data)
             length = len(data)
-            
+        else:
+            if not hasattr(data_stream, "read"):
+                raise ValueError("data_stream must be a file-like object")
+            stream = data_stream  # type: ignore[assignment]
+
+        if length is None:
+            if hasattr(stream, "seek") and hasattr(stream, "tell"):
+                current_pos = stream.tell()
+                stream.seek(0, 2)
+                length = stream.tell()
+                stream.seek(current_pos)
+            else:
+                raise ValueError("length is required for streaming uploads without seekable stream")
+
+        if stream is data_stream and hasattr(stream, "seek"):
+            stream.seek(0)
+
+        try:
             self.client.put_object(
-                bucket_name,
-                object_name,
-                data_stream,
-                length,
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=stream,
+                length=length,
                 content_type=content_type,
-                metadata=metadata
+                metadata=metadata,
             )
-            logger.info(f"Uploaded {object_name} to {bucket_name}")
-        except S3Error as e:
-            logger.error(f"Error uploading file: {e}")
+            logger.info("Uploaded %s to bucket %s (size=%s)", object_name, bucket_name, length)
+        except S3Error as exc:
+            logger.error("Error uploading file %s: %s", object_name, exc)
             raise
     
     def download_file(self, bucket_name: str, object_name: str) -> bytes:
