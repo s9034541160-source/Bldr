@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_BROKER_DB: int = int(os.getenv("REDIS_BROKER_DB", "1"))
+    REDIS_RESULT_DB: int = int(os.getenv("REDIS_RESULT_DB", "2"))
+    
+    # Celery / Task Queue
+    CELERY_BROKER_URL: Optional[str] = os.getenv("CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: Optional[str] = os.getenv("CELERY_RESULT_BACKEND")
+    CELERY_DEFAULT_QUEUE: str = os.getenv("CELERY_DEFAULT_QUEUE", "bldr_default")
+    CELERY_TASK_TIME_LIMIT: int = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
+    CELERY_TASK_SOFT_TIME_LIMIT: int = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+    CELERY_RESULT_EXPIRES: int = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
     
     # MinIO
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
@@ -72,6 +82,19 @@ class Settings(BaseSettings):
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     
+    # Email intake (IMAP)
+    IMAP_HOST: Optional[str] = os.getenv("IMAP_HOST")
+    IMAP_PORT: int = int(os.getenv("IMAP_PORT", "993"))
+    IMAP_USE_SSL: bool = os.getenv("IMAP_USE_SSL", "True").lower() == "true"
+    IMAP_USERNAME: Optional[str] = os.getenv("IMAP_USERNAME")
+    IMAP_PASSWORD: Optional[str] = os.getenv("IMAP_PASSWORD")
+    IMAP_MAILBOX: str = os.getenv("IMAP_MAILBOX", "INBOX")
+    
+    # Google Forms
+    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    GOOGLE_FORMS_SPREADSHEET_ID: Optional[str] = os.getenv("GOOGLE_FORMS_SPREADSHEET_ID")
+    GOOGLE_FORMS_RANGE: str = os.getenv("GOOGLE_FORMS_RANGE", "Форма!A:Z")
+    
     # 1С Integration
     ONEC_API_URL: Optional[str] = os.getenv("ONEC_API_URL")
     ONEC_API_TOKEN: Optional[str] = os.getenv("ONEC_API_TOKEN")
@@ -79,6 +102,26 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
+    @property
+    def redis_url(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def redis_broker_url(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_BROKER_DB}"
+
+    @property
+    def redis_result_url(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_RESULT_DB}"
+
+    @property
+    def celery_broker_url(self) -> str:
+        return self.CELERY_BROKER_URL or self.redis_broker_url
+
+    @property
+    def celery_result_backend(self) -> str:
+        return self.CELERY_RESULT_BACKEND or self.redis_result_url
 
 
 # Глобальный экземпляр настроек

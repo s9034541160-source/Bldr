@@ -28,6 +28,7 @@ def get_db():
 from backend.models.auth import User, Role, Permission
 from backend.models.document import Document, DocumentVersion, DocumentMetadata
 from backend.models.project import Project
+from backend.models.project_request import ProjectRequest
 from backend.models.document_permission import DocumentPermission, DocumentAccessLog
 
 __all__ = [
@@ -35,5 +36,6 @@ __all__ = [
     "User", "Role", "Permission",
     "Document", "DocumentVersion", "DocumentMetadata",
     "Project",
+    "ProjectRequest",
     "DocumentPermission", "DocumentAccessLog"
 ]

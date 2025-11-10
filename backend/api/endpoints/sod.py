@@ -10,6 +10,7 @@ from backend.models import get_db
 from backend.services.sod_service import SODService
 from backend.services.document_search import DocumentSearchService
 from backend.services.document_permission_service import DocumentPermissionService
+from backend.services.task_queue import task_queue
 from backend.middleware.rbac import get_current_user, require_permission
 from backend.middleware.document_permission import require_document_permission
 from backend.models.auth import User
@@ -101,6 +102,12 @@ async def create_document(
             project_id=project_id,
             created_by=current_user.id,
         )
+
+        dispatch = task_queue.schedule_document_indexing(
+            document_id=document.id,
+            version_number=document.version,
+        )
+        logger.info("Scheduled indexing task %s for document %s", dispatch.task_id, document.id)
         
         return DocumentResponse(
             id=document.id,
@@ -242,6 +249,11 @@ async def create_version(
             changed_by=current_user.id,
             file_name=file.filename or document.file_name
         )
+
+        task_queue.schedule_document_indexing(
+            document_id=document_id,
+            version_number=version.version_number,
+        )
         
         return {
             "version_number": version.version_number,
@@ -270,6 +282,11 @@ async def revert_document(
             document_id=document_id,
             version_number=version_number,
             reverted_by=current_user.id
+        )
+
+        task_queue.schedule_document_indexing(
+            document_id=document_id,
+            version_number=version.version_number,
         )
         
         return {
