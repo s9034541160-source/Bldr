@@ -2,7 +2,7 @@
 Реестр инструментов для агентов
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, List
 from backend.core.tools.base_tool import Tool
 from backend.core.tools.rag_tool import RAGTool
 from backend.core.tools.calculator_tool import CalculatorTool
@@ -35,11 +35,19 @@ class ToolRegistry:
         self.tools[tool.tool_id] = tool
         logger.info(f"Tool {tool.tool_id} registered")
     
+    def unregister_tool(self, tool_id: str) -> bool:
+        """Удаление инструмента из реестра"""
+        if tool_id in self.tools:
+            del self.tools[tool_id]
+            logger.info("Tool %s unregistered", tool_id)
+            return True
+        return False
+    
     def get_tool(self, tool_id: str) -> Optional[Tool]:
         """Получение инструмента по ID"""
         return self.tools.get(tool_id)
     
-    def list_tools(self) -> list[Dict]:
+    def list_tools(self) -> List[Dict[str, Any]]:
         """Список всех инструментов"""
         return [tool.get_schema() for tool in self.tools.values()]
     

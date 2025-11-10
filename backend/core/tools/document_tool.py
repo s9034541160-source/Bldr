@@ -20,42 +20,39 @@ class DocumentTool(Tool):
     def execute(self, action: str, **kwargs) -> Dict[str, Any]:
         """Выполнение действия с документом"""
         try:
-            if action == "list":
-                bucket = kwargs.get("bucket", "documents")
-                prefix = kwargs.get("prefix", "")
-                files = minio_service.list_files(bucket, prefix)
-                return {
-                    "success": True,
-                    "action": action,
-                    "files": files
-                }
-            
-            elif action == "get_url":
-                bucket = kwargs.get("bucket", "documents")
-                object_name = kwargs.get("object_name")
-                if not object_name:
+            match action:
+                case "list":
+                    bucket = kwargs.get("bucket", "documents")
+                    prefix = kwargs.get("prefix", "")
+                    files = minio_service.list_files(bucket, prefix)
+                    return {
+                        "success": True,
+                        "action": action,
+                        "files": files
+                    }
+                case "get_url":
+                    bucket = kwargs.get("bucket", "documents")
+                    object_name = kwargs.get("object_name")
+                    if not object_name:
+                        return {
+                            "success": False,
+                            "error": "object_name is required"
+                        }
+                    url = minio_service.get_file_url(
+                        bucket=bucket,
+                        object_name=object_name,
+                        expires_seconds=kwargs.get("expires_seconds", 3600)
+                    )
+                    return {
+                        "success": True,
+                        "action": action,
+                        "url": url
+                    }
+                case _:
                     return {
                         "success": False,
-                        "error": "object_name is required"
+                        "error": f"Unknown action: {action}"
                     }
-                
-                url = minio_service.get_file_url(
-                    bucket=bucket,
-                    object_name=object_name,
-                    expires_seconds=kwargs.get("expires_seconds", 3600)
-                )
-                return {
-                    "success": True,
-                    "action": action,
-                    "url": url
-                }
-            
-            else:
-                return {
-                    "success": False,
-                    "error": f"Unknown action: {action}"
-                }
-                
         except Exception as e:
             return {
                 "success": False,
