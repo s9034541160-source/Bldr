@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     LLM_MODEL_PATH: Optional[str] = os.getenv("LLM_MODEL_PATH")
     LLM_CONTEXT_SIZE: int = int(os.getenv("LLM_CONTEXT_SIZE", "4096"))
     LLM_N_GPU_LAYERS: int = int(os.getenv("LLM_N_GPU_LAYERS", "0"))
+    LLM_MODEL_TTL_SECONDS: int = int(os.getenv("LLM_MODEL_TTL_SECONDS", "300"))
+    LLM_MAX_LOADED_MODELS: int = int(os.getenv("LLM_MAX_LOADED_MODELS", "3"))
     
     # RAG
     RAG_EMBEDDING_MODEL: str = os.getenv(
