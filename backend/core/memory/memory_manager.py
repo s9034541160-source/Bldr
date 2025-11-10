@@ -2,7 +2,7 @@
 Менеджер памяти для управления краткосрочной и долгосрочной памятью
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from backend.core.memory.short_term import ShortTermMemory
 from backend.core.memory.long_term import LongTermMemory
 import logging
