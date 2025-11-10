@@ -4,7 +4,7 @@ API эндпоинты для СОД (Среда общих данных)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from backend.models import get_db
 from backend.services.sod_service import SODService
@@ -44,6 +44,16 @@ class VersionResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class VersionCompareResponse(BaseModel):
+    """Ответ с результатом сравнения версий"""
+    document_id: int
+    base_version: Dict[str, Any]
+    target_version: Dict[str, Any]
+    hash_equal: bool
+    size_difference: int
+    diff_preview: List[str]
 
 
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
@@ -199,7 +209,8 @@ async def create_version(
             document_id=document_id,
             file_data=file_data,
             change_description=change_description,
-            changed_by=current_user.id
+            changed_by=current_user.id,
+            file_name=file.filename or document.file_name
         )
         
         return {
@@ -243,6 +254,33 @@ async def revert_document(
         logger.error(f"Revert error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/documents/{document_id}/compare", response_model=VersionCompareResponse)
+async def compare_document_versions(
+    document_id: int,
+    base_version: int = Query(..., gt=0),
+    target_version: int = Query(..., gt=0),
+    document: Document = Depends(require_document_permission("read")),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Сравнение двух версий документа"""
+    if base_version == target_version:
+        raise HTTPException(status_code=400, detail="Versions for comparison must be different")
+
+    try:
+        service = SODService(db)
+        comparison = service.compare_versions(
+            document_id=document_id,
+            base_version=base_version,
+            target_version=target_version
+        )
+        return comparison
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Version compare error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/documents/{document_id}/download")
 async def download_document(

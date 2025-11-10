@@ -11,6 +11,7 @@ from backend.services.document_classifier import document_classifier
 from datetime import datetime
 import hashlib
 import logging
+import difflib
 
 logger = logging.getLogger(__name__)
 
@@ -170,13 +171,88 @@ class SODService:
         
         logger.info(f"Reverted document {document_id} to version {version_number}")
         return new_version
+
+    def compare_versions(
+        self,
+        document_id: int,
+        base_version: int,
+        target_version: int,
+    ) -> Dict[str, Any]:
+        """Сравнение двух версий документа"""
+        document = self.get_document(document_id)
+        if not document:
+            raise ValueError(f"Document {document_id} not found")
+
+        base = self.db.query(DocumentVersion).filter(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.version_number == base_version
+        ).first()
+        target = self.db.query(DocumentVersion).filter(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.version_number == target_version
+        ).first()
+
+        if not base or not target:
+            raise ValueError("One or both versions were not found")
+
+        base_data = minio_service.download_file("documents", base.file_path)
+        target_data = minio_service.download_file("documents", target.file_path)
+
+        base_hash = hashlib.sha256(base_data).hexdigest()
+        target_hash = hashlib.sha256(target_data).hexdigest()
+        base_size = len(base_data)
+        target_size = len(target_data)
+
+        diff_preview: List[str] = []
+        if self._is_text_mime(document.mime_type):
+            base_lines = base_data.decode("utf-8", errors="ignore").splitlines()
+            target_lines = target_data.decode("utf-8", errors="ignore").splitlines()
+            diff_lines = difflib.unified_diff(
+                base_lines,
+                target_lines,
+                fromfile=f"v{base_version}",
+                tofile=f"v{target_version}",
+                lineterm=""
+            )
+            for idx, line in enumerate(diff_lines):
+                if idx >= 200:
+                    diff_preview.append("... (diff truncated)")
+                    break
+                diff_preview.append(line)
+        else:
+            diff_preview.append("Binary content; textual diff unavailable.")
+
+        size_diff = target_size - base_size
+        return {
+            "document_id": document_id,
+            "base_version": {
+                "version_number": base_version,
+                "file_hash": base_hash,
+                "file_size": base_size,
+                "change_description": base.change_description,
+                "created_at": base.created_at.isoformat() if base.created_at else None,
+            },
+            "target_version": {
+                "version_number": target_version,
+                "file_hash": target_hash,
+                "file_size": target_size,
+                "change_description": target.change_description,
+                "created_at": target.created_at.isoformat() if target.created_at else None,
+            },
+            "hash_equal": base_hash == target_hash,
+            "size_difference": size_diff,
+            "diff_preview": diff_preview,
+        }
     
     def create_version(
         self,
         document_id: int,
         file_data: bytes,
         change_description: str,
-        changed_by: int
+        changed_by: int,
+        file_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> DocumentVersion:
         """Создание новой версии документа"""
         document = self.db.query(Document).filter(Document.id == document_id).first()
@@ -196,27 +272,46 @@ class SODService:
             logger.warning(f"Duplicate version detected for document {document_id}")
             return existing_version
         
-        # Генерация пути для новой версии
+        new_file_name = file_name or document.file_name
+        new_mime_type = mime_type or self._detect_mime_type(new_file_name)
         timestamp = datetime.utcnow().strftime("%Y/%m/%d")
-        file_path = f"{document.document_type}/{timestamp}/{file_hash[:8]}/v{document.version + 1}_{document.file_name}"
+        next_version_number = document.version + 1
+        file_path = f"{document.document_type}/{timestamp}/{file_hash[:8]}/v{next_version_number}_{new_file_name}"
         
-        # Загрузка в MinIO
         minio_service.upload_file(
             bucket_name="documents",
             object_name=file_path,
             data=file_data,
-            content_type=document.mime_type
+            content_type=new_mime_type
         )
         
-        # Обновление версии документа
-        document.version += 1
-        document.parent_version_id = document.id
+        document.file_name = new_file_name
+        document.file_path = file_path
+        document.file_size = len(file_data)
+        document.mime_type = new_mime_type
+        document.version = next_version_number
         document.updated_by = changed_by
         
-        # Создание записи версии
+        classification = document_classifier.classify_document(
+            file_name=new_file_name,
+            title=document.title
+        )
+        extracted_metadata = document_classifier.extract_metadata(
+            file_name=new_file_name,
+            file_path=file_path,
+            mime_type=new_mime_type
+        )
+        document.metadata = {
+            **(document.metadata or {}),
+            **(metadata or {}),
+            "classification": classification,
+            "extracted": extracted_metadata,
+        }
+        document.document_type = classification.get("document_type", document.document_type)
+        
         version = DocumentVersion(
             document_id=document_id,
-            version_number=document.version,
+            version_number=next_version_number,
             file_path=file_path,
             file_hash=file_hash,
             change_description=change_description,
@@ -307,4 +402,13 @@ class SODService:
             "png": "image/png"
         }
         return mime_types.get(ext, "application/octet-stream")
+
+    def _is_text_mime(self, mime_type: str) -> bool:
+        """Проверка, является ли MIME тип текстовым"""
+        if not mime_type:
+            return False
+        if mime_type.startswith("text/"):
+            return True
+        text_like = {"application/json", "application/xml", "application/javascript"}
+        return mime_type.lower() in text_like
 
