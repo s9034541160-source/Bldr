@@ -48,6 +48,7 @@ celery_app = Celery(
         "backend.tasks.document_tasks",
         "backend.tasks.process_tasks",
         "backend.tasks.system_tasks",
+        "backend.tasks.training_tasks",
         "backend.tasks.model_tasks",
     ],
 )
@@ -68,6 +69,7 @@ celery_app.conf.update(
         "processes.poll_email_inbox": {"queue": settings.CELERY_PROCESS_QUEUE},
         "processes.ingest_google_form_submission": {"queue": settings.CELERY_PROCESS_QUEUE},
         "processes.ingest_telegram_update": {"queue": settings.CELERY_PROCESS_QUEUE},
+        "training.build_dataset": {"queue": settings.CELERY_PROCESS_QUEUE},
         "system.health_check": {"queue": settings.CELERY_MONITORING_QUEUE},
         "models.fine_tune_unsloth": {"queue": settings.CELERY_MODEL_QUEUE},
     },

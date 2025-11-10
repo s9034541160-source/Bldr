@@ -4,6 +4,7 @@ import {
   HomeOutlined,
   FileTextOutlined,
   SettingOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons'
 import Header from './Header'
 import { Outlet } from 'react-router-dom'
@@ -24,6 +25,11 @@ const MainLayout = () => {
       key: '/documents',
       icon: <FileTextOutlined />,
       label: 'Документы (СОД)',
+    },
+    {
+      key: '/training',
+      icon: <ExperimentOutlined />,
+      label: 'Дообучение моделей',
     },
     {
       key: '/settings',

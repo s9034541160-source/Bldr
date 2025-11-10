@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
 import DocumentsPage from './pages/DocumentsPage'
 import DocumentDetailPage from './pages/DocumentDetailPage'
+import TrainingPage from './pages/TrainingPage'
 
 // Компонент для защищенных роутов
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -38,6 +39,7 @@ function App() {
               <Route index element={<HomePage />} />
               <Route path="documents" element={<DocumentsPage />} />
               <Route path="documents/:id" element={<DocumentDetailPage />} />
+              <Route path="training" element={<TrainingPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

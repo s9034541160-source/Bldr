@@ -29,6 +29,7 @@ from backend.models.auth import User, Role, Permission
 from backend.models.document import Document, DocumentVersion, DocumentMetadata
 from backend.models.project import Project
 from backend.models.project_request import ProjectRequest
+from backend.models.training import TrainingDataset, TrainingJob
 from backend.models.document_permission import DocumentPermission, DocumentAccessLog
 
 __all__ = [
@@ -37,5 +38,7 @@ __all__ = [
     "Document", "DocumentVersion", "DocumentMetadata",
     "Project",
     "ProjectRequest",
+    "TrainingDataset",
+    "TrainingJob",
     "DocumentPermission", "DocumentAccessLog"
 ]

@@ -98,8 +98,12 @@ class UnslothFineTuner:
             lora_dropout=config["lora_dropout"],
         )
 
-        dataset = load_dataset(request.dataset_path)
-        eval_dataset = load_dataset(request.evaluation_dataset_path) if request.evaluation_dataset_path else None
+        dataset = self._load_dataset(request.dataset_path)
+        eval_dataset = (
+            self._load_dataset(request.evaluation_dataset_path)
+            if request.evaluation_dataset_path
+            else None
+        )
 
         training_args = UnslothTrainingArguments(
             output_dir=config["output_dir"],
@@ -119,7 +123,7 @@ class UnslothFineTuner:
             tokenizer=tokenizer,
             args=training_args,
             train_dataset=dataset["train"],
-            eval_dataset=eval_dataset["validation"] if eval_dataset else None,
+            eval_dataset=(eval_dataset["validation"] if eval_dataset and "validation" in eval_dataset else None),
             dataset_text_field="text",
             packing=True,
         )
@@ -139,6 +143,19 @@ class UnslothFineTuner:
             eval_loss=metrics.get("eval_loss"),
             metrics=metrics,
         )
+
+    def _load_dataset(self, path: Optional[str]):
+        if not path:
+            raise ValueError("Dataset path is required")
+        source = Path(path)
+        if source.is_file() and source.suffix in {".json", ".jsonl"}:
+            return load_dataset(
+                "json",
+                data_files={"train": str(source)},
+            )
+        if source.is_dir():
+            return load_dataset(str(source))
+        return load_dataset(path)
 
 
 __all__ = ["UnslothFineTuner", "FineTuneRequest", "FineTuneResult"]

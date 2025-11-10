@@ -71,6 +71,13 @@ class TaskQueue:
             },
         )
 
+    def schedule_dataset_build(self, *, dataset_id: int) -> TaskDispatchResult:
+        return self.enqueue(
+            task_name="training.build_dataset",
+            queue=settings.CELERY_PROCESS_QUEUE,
+            kwargs={"dataset_id": dataset_id},
+        )
+
     def schedule_email_polling(self, *, limit: int = 25) -> TaskDispatchResult:
         return self.enqueue(
             task_name="processes.poll_email_inbox",
@@ -81,22 +88,12 @@ class TaskQueue:
     def schedule_model_finetune(
         self,
         *,
-        dataset_path: str,
-        base_model_id: Optional[str] = None,
-        output_dir: Optional[str] = None,
-        extra_kwargs: Optional[Dict[str, Any]] = None,
+        job_id: int,
     ) -> TaskDispatchResult:
-        payload = {
-            "dataset_path": dataset_path,
-            "base_model_id": base_model_id,
-            "output_dir": output_dir,
-        }
-        if extra_kwargs:
-            payload.update(extra_kwargs)
         return self.enqueue(
             task_name="models.fine_tune_unsloth",
             queue=settings.CELERY_MODEL_QUEUE,
-            kwargs=payload,
+            kwargs={"job_id": job_id},
         )
 
 
