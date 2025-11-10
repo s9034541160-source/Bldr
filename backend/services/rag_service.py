@@ -2,10 +2,12 @@
 Сервис RAG (Retrieval-Augmented Generation)
 """
 
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from backend.services.qdrant_service import qdrant_service
 from backend.core.model_manager import model_manager
+from backend.services.document_parser import get_document_parser, DocumentChunk
 import logging
 import hashlib
 
@@ -18,6 +20,7 @@ class RAGService:
     def __init__(self):
         self.embedding_model = None
         self._load_embedding_model()
+        self.document_parser = get_document_parser()
     
     def _load_embedding_model(self):
         """Загрузка модели для эмбеддингов"""
@@ -76,6 +79,63 @@ class RAGService:
             
         except Exception as e:
             logger.error(f"Failed to index document {document_id}: {e}")
+            return False
+
+    def index_document_chunks(
+        self,
+        document_id: str,
+        chunks: List[DocumentChunk],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Индексация документа по чанкам."""
+        success = True
+        for idx, chunk in enumerate(chunks):
+            chunk_id = f"{document_id}::chunk::{idx}"
+            chunk_metadata = {
+                "chunk_index": idx,
+                "document_id": document_id,
+                "title": chunk.title,
+                "level": chunk.level,
+                "hierarchy": chunk.hierarchy,
+            }
+            if metadata:
+                chunk_metadata.update(metadata)
+            chunk_metadata.update(chunk.metadata)
+            if not self.index_document(
+                document_id=chunk_id,
+                text=chunk.text,
+                metadata=chunk_metadata,
+            ):
+                success = False
+        return success
+
+    def index_file(
+        self,
+        document_id: str,
+        file_path: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        chunk: bool = True,
+    ) -> bool:
+        """Извлечение текста из файла и индексация."""
+        try:
+            path = Path(file_path)
+            if not path.exists():
+                raise FileNotFoundError(f"File not found: {file_path}")
+            if chunk:
+                document_chunks = self.document_parser.extract_chunks_from_file(str(path))
+                return self.index_document_chunks(
+                    document_id=document_id,
+                    chunks=document_chunks,
+                    metadata=metadata,
+                )
+            text = self.document_parser.extract_plain_text(str(path))
+            return self.index_document(
+                document_id=document_id,
+                text=text,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.error("Failed to index file %s: %s", file_path, exc)
             return False
     
     def search(

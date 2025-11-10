@@ -29,6 +29,8 @@ PyMuPDF==1.23.8
 python-docx==1.1.0
 openpyxl==3.1.2
 docx2pdf==0.1.8
+pytesseract==0.3.10
+Pillow==10.1.0
 
 # ИИ и ML
 llama-cpp-python==0.2.20
