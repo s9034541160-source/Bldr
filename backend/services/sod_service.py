@@ -421,6 +421,39 @@ class SODService:
         
         logger.info(f"Deleted document {document_id}")
         return True
+
+    def update_metadata(
+        self,
+        document_id: int,
+        metadata: Optional[Dict[str, Any]] = None,
+        tags: Optional[List[str]] = None,
+        linked_documents: Optional[List[int]] = None,
+        updated_by: Optional[int] = None,
+    ) -> Document:
+        """Обновление пользовательских метаданных документа"""
+        document = self.get_document(document_id)
+        if not document:
+            raise ValueError(f"Document {document_id} not found")
+
+        current_metadata = document.metadata or {}
+
+        if metadata is not None:
+            current_metadata["custom"] = metadata
+
+        if tags is not None:
+            current_metadata["tags"] = tags
+
+        if linked_documents is not None:
+            current_metadata["linked_documents"] = linked_documents
+
+        document.metadata = current_metadata
+        if updated_by:
+            document.updated_by = updated_by
+
+        self.db.commit()
+        self.db.refresh(document)
+        logger.info("Updated metadata for document %s", document_id)
+        return document
     
     def _detect_mime_type(self, file_name: str) -> str:
         """Определение MIME типа по расширению файла"""

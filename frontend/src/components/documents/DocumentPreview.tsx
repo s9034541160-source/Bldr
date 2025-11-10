@@ -22,6 +22,7 @@ const DocumentPreview = ({ documentId, version, fileName, mimeType }: DocumentPr
 
   useEffect(() => {
     let active = true
+    let localUrl: string | null = null
     const loadPreview = async () => {
       setState({ status: 'loading' })
       try {
@@ -31,12 +32,14 @@ const DocumentPreview = ({ documentId, version, fileName, mimeType }: DocumentPr
         const type = mimeType || blob.type || ''
         if (type.includes('pdf')) {
           const url = URL.createObjectURL(blob)
+          localUrl = url
           setObjectUrl(url)
           setState({ status: 'ready', contentType: 'pdf', data: url })
           return
         }
         if (type.startsWith('image/')) {
           const url = URL.createObjectURL(blob)
+          localUrl = url
           setObjectUrl(url)
           setState({ status: 'ready', contentType: 'image', data: url })
           return
@@ -56,11 +59,14 @@ const DocumentPreview = ({ documentId, version, fileName, mimeType }: DocumentPr
     loadPreview()
     return () => {
       active = false
-      if (objectUrl) {
+      if (localUrl) {
+        URL.revokeObjectURL(localUrl)
+      }
+      if (objectUrl && objectUrl !== localUrl) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [documentId, version, mimeType, objectUrl])
+  }, [documentId, version, mimeType])
 
   const items: TabsProps['items'] = [
     {

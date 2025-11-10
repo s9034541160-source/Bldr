@@ -30,6 +30,8 @@ class DocumentResponse(BaseModel):
     version: int
     status: str
     created_at: str
+    mime_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
     
     class Config:
         from_attributes = True
@@ -54,6 +56,12 @@ class VersionCompareResponse(BaseModel):
     hash_equal: bool
     size_difference: int
     diff_preview: List[str]
+
+
+class UpdateMetadataRequest(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
+    tags: Optional[List[str]] = None
+    linked_document_ids: Optional[List[int]] = None
 
 
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
@@ -101,7 +109,9 @@ async def create_document(
             document_type=document.document_type,
             version=document.version,
             status=document.status,
-            created_at=document.created_at.isoformat()
+            created_at=document.created_at.isoformat(),
+            mime_type=document.mime_type,
+            metadata=document.metadata,
         )
     except Exception as e:
         logger.error(f"Document creation error: {e}")
@@ -123,7 +133,9 @@ async def get_document(
         document_type=document.document_type,
         version=document.version,
         status=document.status,
-        created_at=document.created_at.isoformat()
+        created_at=document.created_at.isoformat(),
+        mime_type=document.mime_type,
+        metadata=document.metadata,
     )
 
 
@@ -179,7 +191,9 @@ async def search_documents(
             document_type=d.document_type,
             version=d.version,
             status=d.status,
-            created_at=d.created_at.isoformat()
+            created_at=d.created_at.isoformat(),
+            mime_type=d.mime_type,
+            metadata=d.metadata,
         )
         for d in documents
     ]
@@ -268,6 +282,42 @@ async def revert_document(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Revert error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/documents/{document_id}/metadata", response_model=DocumentResponse)
+async def update_document_metadata(
+    document_id: int,
+    request: UpdateMetadataRequest,
+    document: Document = Depends(require_document_permission("write")),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Обновление пользовательских метаданных, тегов и связей документа"""
+    try:
+        service = SODService(db)
+        updated = service.update_metadata(
+            document_id=document_id,
+            metadata=request.metadata,
+            tags=request.tags,
+            linked_documents=request.linked_document_ids,
+            updated_by=current_user.id,
+        )
+        return DocumentResponse(
+            id=updated.id,
+            title=updated.title,
+            file_name=updated.file_name,
+            document_type=updated.document_type,
+            version=updated.version,
+            status=updated.status,
+            created_at=updated.created_at.isoformat(),
+            mime_type=updated.mime_type,
+            metadata=updated.metadata,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Metadata update error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

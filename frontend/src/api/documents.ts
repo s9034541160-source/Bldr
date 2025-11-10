@@ -130,5 +130,17 @@ export const documentsApi = {
     })
     return response.data
   },
+
+  updateMetadata: async (
+    id: number,
+    payload: {
+      metadata?: Record<string, unknown>
+      tags?: string[]
+      linked_document_ids?: number[]
+    }
+  ) => {
+    const response = await apiClient.patch<Document>(`/sod/documents/${id}/metadata`, payload)
+    return response.data
+  },
 }
 
