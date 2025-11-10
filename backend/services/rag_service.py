@@ -2,14 +2,19 @@
 Сервис RAG (Retrieval-Augmented Generation)
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Iterable
+import logging
+import hashlib
+
 from sentence_transformers import SentenceTransformer
+from qdrant_client.models import PointStruct
+
+from backend.config.settings import settings
 from backend.services.qdrant_service import qdrant_service
 from backend.core.model_manager import model_manager
 from backend.services.document_parser import get_document_parser, DocumentChunk
-import logging
-import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +26,17 @@ class RAGService:
         self.embedding_model = None
         self._load_embedding_model()
         self.document_parser = get_document_parser()
+        self.batch_size = settings.RAG_BATCH_SIZE
+        self.parallel_workers = settings.RAG_PARALLEL_WORKERS
     
     def _load_embedding_model(self):
         """Загрузка модели для эмбеддингов"""
         try:
-            from backend.config.settings import settings
             model_name = settings.RAG_EMBEDDING_MODEL
             logger.info(f"Loading embedding model: {model_name}")
             self.embedding_model = SentenceTransformer(model_name)
+            vector_size = self.embedding_model.get_sentence_embedding_dimension()
+            qdrant_service.init_collection(vector_size=vector_size)
             logger.info("Embedding model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}")
@@ -42,6 +50,26 @@ class RAGService:
         embedding = self.embedding_model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
     
+    def _build_point(
+        self,
+        document_id: str,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PointStruct:
+        embedding = self.create_embedding(text)
+        payload = {
+            "text": text,
+            "document_id": document_id,
+        }
+        if metadata:
+            payload.update(metadata)
+
+        return PointStruct(
+            id=document_id,
+            vector=embedding,
+            payload=payload,
+        )
+
     def index_document(
         self,
         document_id: str,
@@ -58,21 +86,14 @@ class RAGService:
         """
         try:
             # Создание эмбеддинга
-            embedding = self.create_embedding(text)
-            
-            # Подготовка метаданных
-            payload = {
-                "text": text,
-                "document_id": document_id,
-                **(metadata or {})
-            }
-            
-            # Добавление в Qdrant
-            qdrant_service.add_document(
+            point = self._build_point(
                 document_id=document_id,
-                vector=embedding,
-                payload=payload
+                text=text,
+                metadata=metadata,
             )
+
+            # Добавление в Qdrant
+            qdrant_service.add_documents_batch([point])
             
             logger.info(f"Document {document_id} indexed successfully")
             return True
@@ -89,6 +110,7 @@ class RAGService:
     ) -> bool:
         """Индексация документа по чанкам."""
         success = True
+        batch: List[PointStruct] = []
         for idx, chunk in enumerate(chunks):
             chunk_id = f"{document_id}::chunk::{idx}"
             chunk_metadata = {
@@ -101,12 +123,21 @@ class RAGService:
             if metadata:
                 chunk_metadata.update(metadata)
             chunk_metadata.update(chunk.metadata)
-            if not self.index_document(
-                document_id=chunk_id,
-                text=chunk.text,
-                metadata=chunk_metadata,
-            ):
+            try:
+                point = self._build_point(
+                    document_id=chunk_id,
+                    text=chunk.text,
+                    metadata=chunk_metadata,
+                )
+                batch.append(point)
+                if len(batch) >= self.batch_size:
+                    qdrant_service.add_documents_batch(batch)
+                    batch = []
+            except Exception as exc:
+                logger.error("Failed to build chunk %s: %s", chunk_id, exc)
                 success = False
+        if batch:
+            qdrant_service.add_documents_batch(batch)
         return success
 
     def index_file(
@@ -137,6 +168,44 @@ class RAGService:
         except Exception as exc:
             logger.error("Failed to index file %s: %s", file_path, exc)
             return False
+
+    def index_files_parallel(
+        self,
+        items: Iterable[Dict[str, Any]],
+        chunk: bool = True,
+    ) -> Dict[str, Any]:
+        """Параллельная индексация файлов."""
+        items = list(items)
+        if not items:
+            return {"processed": 0, "succeeded": 0, "failed": []}
+
+        results = {
+            "processed": len(items),
+            "succeeded": 0,
+            "failed": [],
+        }
+
+        def _process(item: Dict[str, Any]) -> bool:
+            return self.index_file(
+                document_id=item["document_id"],
+                file_path=item["file_path"],
+                metadata=item.get("metadata"),
+                chunk=chunk,
+            )
+
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            future_to_item = {executor.submit(_process, item): item for item in items}
+            for future in as_completed(future_to_item):
+                item = future_to_item[future]
+                try:
+                    if future.result():
+                        results["succeeded"] += 1
+                    else:
+                        results["failed"].append(item["document_id"])
+                except Exception as exc:
+                    logger.error("Parallel indexing failed for %s: %s", item, exc)
+                    results["failed"].append(item["document_id"])
+        return results
     
     def search(
         self,

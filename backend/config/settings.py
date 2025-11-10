@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     )
     RAG_COLLECTION_NAME: str = "bldr_documents"
+    RAG_BATCH_SIZE: int = int(os.getenv("RAG_BATCH_SIZE", "64"))
+    RAG_PARALLEL_WORKERS: int = int(os.getenv("RAG_PARALLEL_WORKERS", "4"))
+    RAG_ENABLE_QUANTIZATION: bool = os.getenv("RAG_ENABLE_QUANTIZATION", "True").lower() == "true"
+    RAG_QUANTIZATION_QUANTILE: float = float(os.getenv("RAG_QUANTIZATION_QUANTILE", "0.99"))
     
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
