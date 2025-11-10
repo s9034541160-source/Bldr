@@ -25,6 +25,7 @@ class ModelCacheEntry:
     last_accessed: datetime
     ttl_seconds: int
     memory_size_bytes: int
+    priority: int = 0
 
     @property
     def expires_at(self) -> Optional[datetime]:
@@ -45,6 +46,7 @@ class ModelCacheEntry:
             "last_accessed": self.last_accessed.isoformat(),
             "ttl_seconds": self.ttl_seconds,
             "memory_size_bytes": self.memory_size_bytes,
+            "priority": self.priority,
         }
         expires = self.expires_at
         if expires:
@@ -83,17 +85,17 @@ class ModelManager:
         """Выгружает наименее используемые модели при превышении лимита"""
         if len(self.models) <= self._max_models:
             return
-        # сортируем по времени последнего доступа (LRU)
+        # сортируем: низкий приоритет → более старые обращения выгружаются первыми
         sorted_models = sorted(
             self.models.items(),
-            key=lambda item: item[1].last_accessed
+            key=lambda item: (item[1].priority, item[1].last_accessed)
         )
         while len(sorted_models) > self._max_models:
             model_id, _ = sorted_models.pop(0)
             self._unload_internal(model_id, reason="capacity_limit")
             sorted_models = sorted(
                 self.models.items(),
-                key=lambda item: item[1].last_accessed
+                key=lambda item: (item[1].priority, item[1].last_accessed)
             )
 
     def _unload_internal(self, model_id: str, reason: str = "manual") -> bool:
@@ -122,6 +124,7 @@ class ModelManager:
         n_gpu_layers: int = 0,
         verbose: bool = False,
         ttl_seconds: Optional[int] = None,
+        priority: Optional[int] = None,
     ) -> bool:
         """
         Загрузка модели
@@ -164,6 +167,7 @@ class ModelManager:
                 last_accessed=datetime.utcnow(),
                 ttl_seconds=ttl_value,
                 memory_size_bytes=memory_size,
+                priority=priority if priority is not None else 0,
             )
 
             self.models[model_id] = entry
@@ -285,10 +289,22 @@ class ModelManager:
                     "model_id": model_id,
                     "memory_size_bytes": entry.memory_size_bytes,
                     "last_accessed": entry.last_accessed.isoformat(),
+                    "priority": entry.priority,
                 }
                 for model_id, entry in self.models.items()
             ],
         }
+
+    def set_model_priority(self, model_id: str, priority: int) -> bool:
+        """Установка приоритета для модели"""
+        self._cleanup_expired_models()
+        entry = self.models.get(model_id)
+        if not entry:
+            return False
+        entry.priority = priority
+        entry.touch()
+        logger.info("Model %s priority set to %s", model_id, priority)
+        return True
 
 
 # Глобальный экземпляр менеджера моделей

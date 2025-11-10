@@ -40,6 +40,13 @@ class LoadModelRequest(BaseModel):
     n_ctx: Optional[int] = None
     n_gpu_layers: Optional[int] = None
     verbose: bool = False
+    priority: Optional[int] = None
+
+
+class UpdatePriorityRequest(BaseModel):
+    """Запрос на обновление приоритета модели"""
+
+    priority: int
 
 
 class ModelOperationResponse(BaseModel):
@@ -119,6 +126,7 @@ async def load_model(
         n_gpu_layers=request.n_gpu_layers or settings.LLM_N_GPU_LAYERS,
         verbose=request.verbose,
         ttl_seconds=request.ttl_seconds,
+        priority=request.priority,
     )
     
     if not success:
@@ -151,4 +159,22 @@ async def get_llm_metrics(current_user: User = Depends(get_current_user)):
     if "admin" not in user_roles:
         raise HTTPException(status_code=403, detail="Only admins can view LLM metrics")
     return model_manager.get_memory_usage()
+
+
+@router.post("/models/{model_id}/priority", response_model=ModelOperationResponse)
+async def update_model_priority(
+    model_id: str,
+    request: UpdatePriorityRequest,
+    current_user: User = Depends(get_current_user)
+) -> ModelOperationResponse:
+    """Обновление приоритета модели"""
+    user_roles = [role.name for role in current_user.roles]
+    if "admin" not in user_roles:
+        raise HTTPException(status_code=403, detail="Only admins can update priorities")
+
+    success = model_manager.set_model_priority(model_id, request.priority)
+    if not success:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    return ModelOperationResponse(status="priority_updated", model_id=model_id)
 
