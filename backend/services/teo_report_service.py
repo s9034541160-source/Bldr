@@ -7,9 +7,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, Optional
+import tempfile
 
 from docx import Document
+from docx2pdf import convert
+from jinja2 import Environment, FileSystemLoader, Template
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 
@@ -20,8 +24,12 @@ logger = logging.getLogger(__name__)
 
 class TEOReportService:
     """
-    Формирует отчёты по предварительному ТЭО (DOCX, XLSX).
+    Формирует отчёты по предварительному ТЭО (DOCX, XLSX, PDF).
     """
+
+    def __init__(self) -> None:
+        templates_dir = Path(__file__).resolve().parent.parent / "templates"
+        self._env = Environment(loader=FileSystemLoader(templates_dir), autoescape=False)
 
     def build_preliminary_report(self, project: Project, analysis: Optional[Dict[str, Any]]) -> bytes:
         document = Document()
@@ -29,6 +37,13 @@ class TEOReportService:
         document.add_heading("Предварительное ТЭО", level=1)
         document.add_paragraph(f"Проект: {project.name} ({project.code})")
         document.add_paragraph(f"Дата формирования: {datetime.utcnow():%d.%m.%Y %H:%M}")
+
+        summary_text = self._render_text_summary(project, analysis or {})
+        if summary_text:
+            for line in summary_text.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    document.add_paragraph(stripped)
 
         document.add_heading("Общая информация", level=2)
         table = document.add_table(rows=0, cols=2)
@@ -100,9 +115,7 @@ class TEOReportService:
             travel = analysis.get("travel")
             if isinstance(travel, dict):
                 document.add_heading("Командировочные и СИЗ", level=2)
-                document.add_paragraph(
-                    f"Командировочные расходы: {travel.get('total_travel', 0):,.2f} руб."
-                )
+                document.add_paragraph(f"Командировочные расходы: {travel.get('total_travel', 0):,.2f} руб.")
                 document.add_paragraph(f"Билеты: {travel.get('tickets', 0):,.2f} руб.")
                 document.add_paragraph(f"Проживание: {travel.get('lodging', 0):,.2f} руб.")
                 document.add_paragraph(f"Суточные: {travel.get('per_diem', 0):,.2f} руб.")
@@ -308,6 +321,63 @@ class TEOReportService:
         workbook.save(stream)
         stream.seek(0)
         return stream.read()
+
+    def generate_preliminary_bundle(self, project: Project, analysis: Optional[Dict[str, Any]]) -> Dict[str, bytes]:
+        """
+        Возвращает комплект файлов (DOCX, XLSX, PDF) с учётом шаблона Jinja2 и конвертации docx2pdf.
+        """
+        docx_bytes = self.build_preliminary_report(project, analysis)
+        xlsx_bytes = self.build_cost_workbook(project, analysis)
+
+        pdf_bytes: Optional[bytes] = None
+        try:
+            pdf_bytes = self._convert_docx_to_pdf(docx_bytes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to convert TEO report to PDF: %s", exc)
+
+        bundle: Dict[str, bytes] = {"docx": docx_bytes, "xlsx": xlsx_bytes}
+        if pdf_bytes:
+            bundle["pdf"] = pdf_bytes
+        return bundle
+
+    def _render_text_summary(self, project: Project, analysis: Dict[str, Any]) -> str:
+        try:
+            template: Template = self._env.get_template("teo_report_summary.j2")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Unable to load TEO report template: %s", exc)
+            return ""
+
+        context = {
+            "project": {
+                "name": project.name,
+                "code": project.code,
+                "customer_name": getattr(project, "customer_name", None),
+            },
+            "analysis": self._normalize_analysis(analysis),
+            "generated_at": datetime.utcnow().strftime("%d.%m.%Y %H:%M"),
+        }
+        return template.render(**context)
+
+    def _normalize_analysis(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        def ensure_dict(data: Any) -> Dict[str, Any]:
+            return data if isinstance(data, dict) else {}
+
+        return {
+            "work_volume": ensure_dict(analysis.get("work_volume")),
+            "cost": ensure_dict(analysis.get("cost")),
+            "labor": ensure_dict(analysis.get("labor")),
+            "travel": ensure_dict(analysis.get("travel")),
+            "financial": ensure_dict(analysis.get("financial")),
+        }
+
+    def _convert_docx_to_pdf(self, docx_bytes: bytes) -> bytes:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_dir_path = Path(tmp_dir)
+            docx_path = tmp_dir_path / "report.docx"
+            pdf_path = tmp_dir_path / "report.pdf"
+            docx_path.write_bytes(docx_bytes)
+            convert(str(docx_path), str(pdf_path))
+            return pdf_path.read_bytes()
 
     def _detect_unit(self, work_volume: Dict[str, Any]) -> str:
         entries = work_volume.get("entries") or []

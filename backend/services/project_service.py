@@ -84,35 +84,48 @@ class ProjectService:
         integration_updates: Dict[str, Any] = {}
 
         if analysis:
+            report_bundle: Dict[str, bytes] = {}
             try:
-                report_bytes = teo_report_service.build_preliminary_report(project, analysis)
-                report_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.docx"
+                report_bundle = teo_report_service.generate_preliminary_bundle(project, analysis)
+                docx_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.docx"
                 minio_service.upload_file(
                     bucket_name="exports",
-                    object_name=report_object,
-                    data=report_bytes,
+                    object_name=docx_object,
+                    data=report_bundle["docx"],
                     content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
-                project.preliminary_teo_path = report_object
+                project.preliminary_teo_path = docx_object
                 integration_updates["teo_report"] = {
-                    "path": report_object,
+                    "docx_path": docx_object,
                     "generated_at": datetime.utcnow().isoformat(),
                 }
+                if "pdf" in report_bundle:
+                    pdf_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.pdf"
+                    minio_service.upload_file(
+                        bucket_name="exports",
+                        object_name=pdf_object,
+                        data=report_bundle["pdf"],
+                        content_type="application/pdf",
+                    )
+                    integration_updates["teo_report"]["pdf_path"] = pdf_object
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate preliminary TEO report for %s: %s", project.code, exc)
             try:
-                excel_bytes = teo_report_service.build_cost_workbook(project, analysis)
-                excel_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.xlsx"
-                minio_service.upload_file(
-                    bucket_name="exports",
-                object_name=excel_object,
-                    data=excel_bytes,
-                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                excel_bytes = report_bundle.get("xlsx") if report_bundle else teo_report_service.build_cost_workbook(
+                    project, analysis
                 )
-                integration_updates["teo_cost_excel"] = {
-                    "path": excel_object,
-                    "generated_at": datetime.utcnow().isoformat(),
-                }
+                if excel_bytes:
+                    excel_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.xlsx"
+                    minio_service.upload_file(
+                        bucket_name="exports",
+                        object_name=excel_object,
+                        data=excel_bytes,
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                    integration_updates["teo_cost_excel"] = {
+                        "path": excel_object,
+                        "generated_at": datetime.utcnow().isoformat(),
+                    }
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate preliminary TEO Excel for %s: %s", project.code, exc)
 

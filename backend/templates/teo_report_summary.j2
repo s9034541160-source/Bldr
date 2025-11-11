@@ -1,0 +1,38 @@
+{# 
+  Шаблон текстового раздела отчёта ТЭО.
+  Используется для формирования вводных абзацев в DOCX.
+#}
+
+Проект: {{ project.name }} ({{ project.code }})
+Дата формирования: {{ generated_at }}
+
+{% if project.customer_name %}
+Заказчик: {{ project.customer_name }}
+{% endif %}
+
+{% if analysis.work_volume %}
+Всего позиций в ведомости: {{ analysis.work_volume.summary.total_items | default(0) }}
+Суммарный объём: {{ "%.2f"|format(analysis.work_volume.summary.total_quantity | default(0)) }}
+{% endif %}
+
+{% if analysis.cost %}
+Базовая стоимость: {{ "%.2f"|format(analysis.cost.total_cost | default(0)) }} руб.
+Итого с накладными и прибылью: {{ "%.2f"|format(analysis.cost.grand_total | default(0)) }} руб.
+{% if analysis.cost.total_with_travel %}
+С учётом командировок и СИЗ: {{ "%.2f"|format(analysis.cost.total_with_travel) }} руб.
+{% endif %}
+{% endif %}
+
+{% if analysis.labor %}
+Трудоёмкость: {{ "%.2f"|format(analysis.labor.total_labor_hours | default(0)) }} чел·ч.
+Эквивалент работников: {{ "%.2f"|format(analysis.labor.total_worker_equivalent | default(0)) }}.
+{% endif %}
+
+{% if analysis.financial %}
+NPV: {{ "%.2f"|format(analysis.financial.npv | default(0)) }} руб.
+{% if analysis.financial.irr_percent is not none %}IRR: {{ "%.2f"|format(analysis.financial.irr_percent) }} %.
+{% endif %}
+{% if analysis.financial.payback_months %}Срок окупаемости: {{ analysis.financial.payback_months }} мес.{% endif %}
+{% endif %}
+
+
