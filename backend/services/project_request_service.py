@@ -38,6 +38,7 @@ from backend.services.teo_pipeline import PreliminaryTEOPipeline
 from backend.services.notifications.email_service import email_notification_service
 from backend.services.market_price_service import market_price_service
 from backend.services.notifications.telegram import manager_notification_service
+from backend.services.travel_cost_service import travel_cost_service
 from backend.models.auth import User
 from backend.services.project_manager_rotation import ProjectManagerRotation
 
@@ -93,6 +94,20 @@ class ProjectRequestService:
                         analysis["cost"]["manual_price_requests"] = pending_manual_prices
                 if labor_info:
                     analysis["labor"] = labor_info
+                    # Вытягиваем связанные затраты на командировки и СИЗ, чтобы предоставить заказчику полный бюджет.
+                    travel_info = travel_cost_service.estimate(labor_info, metadata)
+                    if travel_info:
+                        travel_payload = travel_info.to_dict()
+                        analysis["travel"] = travel_payload
+                        if cost_info:
+                            base_total = cost_info.get("grand_total") or cost_info.get("total_cost") or 0.0
+                            try:
+                                base_value = float(base_total)
+                            except (TypeError, ValueError):
+                                base_value = 0.0
+                            cost_info["total_with_travel"] = base_value + float(
+                                travel_payload.get("total_with_coeff", 0.0)
+                            )
 
         entity = ProjectRequest(
             channel=request.channel.value,

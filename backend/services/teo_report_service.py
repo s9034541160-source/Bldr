@@ -61,11 +61,14 @@ class TEOReportService:
                 overhead = cost.get("overhead_cost", 0)
                 profit = cost.get("profit", 0)
                 grand_total = cost.get("grand_total", base)
+                total_with_travel = cost.get("total_with_travel")
                 margin = cost.get("margin_percent", 0)
                 document.add_paragraph(f"Базовая стоимость: {base:,.2f} руб.")
                 document.add_paragraph(f"Накладные расходы (18%): {overhead:,.2f} руб.")
                 document.add_paragraph(f"Прибыль (10%): {profit:,.2f} руб.")
                 document.add_paragraph(f"Итого с накладными и прибылью: {grand_total:,.2f} руб.")
+                if total_with_travel:
+                    document.add_paragraph(f"Итого с командировочными и СИЗ: {total_with_travel:,.2f} руб.")
                 document.add_paragraph(f"Маржа: {margin:.2f}%")
                 breakdown = cost.get("group_breakdown") or {}
                 if breakdown:
@@ -93,6 +96,24 @@ class TEOReportService:
                             f"- {name} → требуемо бригад: {data.get('required_workers', 0)} "
                             f"(цикл {data.get('cycle_days')} дн., работа {data.get('work_days')} дн.)"
                         )
+
+            travel = analysis.get("travel")
+            if isinstance(travel, dict):
+                document.add_heading("Командировочные и СИЗ", level=2)
+                document.add_paragraph(
+                    f"Командировочные расходы: {travel.get('total_travel', 0):,.2f} руб."
+                )
+                document.add_paragraph(f"Билеты: {travel.get('tickets', 0):,.2f} руб.")
+                document.add_paragraph(f"Проживание: {travel.get('lodging', 0):,.2f} руб.")
+                document.add_paragraph(f"Суточные: {travel.get('per_diem', 0):,.2f} руб.")
+                document.add_paragraph(f"СИЗ: {travel.get('ppe', 0):,.2f} руб.")
+                document.add_paragraph(
+                    f"Сумма до коэффициентов: {travel.get('total_before_coeff', 0):,.2f} руб."
+                )
+                document.add_paragraph(
+                    f"Итого с коэффициентами: {travel.get('total_with_coeff', 0):,.2f} руб. "
+                    f"(коэффициент {travel.get('coefficient', 1.0)})"
+                )
 
             timeline = analysis.get("timeline")
             if isinstance(timeline, dict):
@@ -131,6 +152,7 @@ class TEOReportService:
             ("Прибыль (10%)", cost.get("profit", 0)),
             ("Итого", cost.get("grand_total", cost.get("total_cost", 0))),
             ("Маржа, %", cost.get("margin_percent", 0)),
+            ("Итого с командировочными и СИЗ", cost.get("total_with_travel", 0)),
         ]
         row_idx = 5
         for title, value in summary_rows:
@@ -221,6 +243,23 @@ class TEOReportService:
                 )
 
         stream = BytesIO()
+        travel = analysis.get("travel")
+        if isinstance(travel, dict):
+            travel_ws = workbook.create_sheet(title="Travel & PPE")
+            travel_ws.append(["Показатель", "Сумма"])
+            travel_ws["A1"].font = Font(bold=True)
+            travel_ws["B1"].font = Font(bold=True)
+            travel_ws.append(["Командировочные (всего)", travel.get("total_travel", 0)])
+            travel_ws.append(["Билеты", travel.get("tickets", 0)])
+            travel_ws.append(["Проживание", travel.get("lodging", 0)])
+            travel_ws.append(["Суточные", travel.get("per_diem", 0)])
+            travel_ws.append(["СИЗ", travel.get("ppe", 0)])
+            travel_ws.append(["Итого до коэффициента", travel.get("total_before_coeff", 0)])
+            travel_ws.append(["Итого с коэффициентом", travel.get("total_with_coeff", 0)])
+            travel_ws.append(["Коэффициент", travel.get("coefficient", 1.0)])
+            travel_ws.append(["Работники (чел.)", travel.get("worker_count", 0)])
+            travel_ws.append(["Человеко-дни", travel.get("worker_days", 0)])
+
         workbook.save(stream)
         stream.seek(0)
         return stream.read()
