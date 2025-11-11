@@ -13,9 +13,21 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(String(36), unique=True, nullable=False, index=True)
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     code = Column(String, unique=True, nullable=False, index=True)  # Уникальный код проекта
+    storage_path = Column(String, nullable=False)
+    geo_latitude = Column(Numeric(10, 6), nullable=True)
+    geo_longitude = Column(Numeric(10, 6), nullable=True)
+    cadastral_number = Column(String, nullable=True)
+    development_zone = Column(String, nullable=True)
+    zone_allowed = Column(Boolean, nullable=True)
+    planned_duration_days = Column(Integer, nullable=True)
+    expected_start = Column(Date, nullable=True)
+    expected_completion = Column(Date, nullable=True)
+    preliminary_budget = Column(Numeric(15, 2), nullable=True)
+    preliminary_teo_path = Column(String, nullable=True)
     
     # Даты
     start_date = Column(Date, nullable=True)

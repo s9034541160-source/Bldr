@@ -102,7 +102,8 @@ def require_role(role_names: List[str]):
             
             user_roles = [role.name for role in current_user.roles]
             if not any(role in user_roles for role in role_names):
-                if not current_user.is_superuser:
+                # Проверяем наличие роли "admin" как суперпользователя
+                if "admin" not in user_roles:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail=f"Required roles: {', '.join(role_names)}"

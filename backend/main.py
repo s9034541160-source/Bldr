@@ -9,6 +9,9 @@ from fastapi.responses import JSONResponse
 import logging
 import sys
 
+from backend.middleware.tracing import RequestTracingMiddleware
+from backend.middleware.authentication import AuthenticationMiddleware
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -38,8 +41,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RequestTracingMiddleware)
+app.add_middleware(
+    AuthenticationMiddleware,
+    exclude_paths={
+        "/",
+        "/api/health",
+        "/api/docs",
+        "/api/redoc",
+        "/openapi.json",
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/api/auth/register",
+    },
+)
+
 # Подключение роутеров
-from backend.api.endpoints import auth, health, llm, rag, tools, validation, hybrid, process_factory, sod, document_permissions, training
+from backend.api.endpoints import auth, health, llm, rag, tools, validation, hybrid, process_factory, sod, document_permissions, training, teo
 app.include_router(auth.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(llm.router, prefix="/api")
@@ -51,6 +69,7 @@ app.include_router(process_factory.router, prefix="/api")
 app.include_router(sod.router, prefix="/api")
 app.include_router(document_permissions.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
+app.include_router(teo.router, prefix="/api")
 
 
 @app.get("/")

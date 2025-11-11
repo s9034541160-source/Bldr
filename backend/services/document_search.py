@@ -63,7 +63,7 @@ class DocumentSearchService:
         metadata_conditions = []
         for term in search_terms:
             metadata_conditions.append(
-                Document.metadata.cast(str).ilike(f"%{term}%")
+                Document.metadata_json.cast(str).ilike(f"%{term}%")
             )
         
         if metadata_conditions:

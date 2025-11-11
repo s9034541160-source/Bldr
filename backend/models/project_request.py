@@ -25,7 +25,7 @@ class ProjectRequest(Base):
     contact_phone = Column(String, nullable=True)
     project_location = Column(String, nullable=True)
     status = Column(String, nullable=False, default="received", index=True)
-    metadata = Column(JSON, nullable=True)
+    metadata_json = Column("metadata", JSON, nullable=True)
     attachments = Column(JSON, nullable=True)
     raw_payload = Column(JSON, nullable=True)
     processed = Column(Boolean, default=False, nullable=False)

@@ -3,7 +3,6 @@ API эндпоинты для СОД (Среда общих данных)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from backend.models import get_db
@@ -15,54 +14,17 @@ from backend.middleware.rbac import get_current_user, require_permission
 from backend.middleware.document_permission import require_document_permission
 from backend.models.auth import User
 from backend.models.document import Document
+from backend.schemas.document import (
+    DocumentResponse,
+    DocumentVersionResponse,
+    DocumentVersionCompareResponse,
+    DocumentMetadataUpdate,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sod", tags=["sod"])
-
-
-class DocumentResponse(BaseModel):
-    """Ответ с информацией о документе"""
-    id: int
-    title: str
-    file_name: str
-    document_type: str
-    version: int
-    status: str
-    created_at: str
-    mime_type: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    
-    class Config:
-        from_attributes = True
-
-
-class VersionResponse(BaseModel):
-    """Ответ с информацией о версии"""
-    id: int
-    version_number: int
-    change_description: Optional[str]
-    created_at: str
-    
-    class Config:
-        from_attributes = True
-
-
-class VersionCompareResponse(BaseModel):
-    """Ответ с результатом сравнения версий"""
-    document_id: int
-    base_version: Dict[str, Any]
-    target_version: Dict[str, Any]
-    hash_equal: bool
-    size_difference: int
-    diff_preview: List[str]
-
-
-class UpdateMetadataRequest(BaseModel):
-    metadata: Optional[Dict[str, Any]] = None
-    tags: Optional[List[str]] = None
-    linked_document_ids: Optional[List[int]] = None
 
 
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
@@ -109,17 +71,7 @@ async def create_document(
         )
         logger.info("Scheduled indexing task %s for document %s", dispatch.task_id, document.id)
         
-        return DocumentResponse(
-            id=document.id,
-            title=document.title,
-            file_name=document.file_name,
-            document_type=document.document_type,
-            version=document.version,
-            status=document.status,
-            created_at=document.created_at.isoformat(),
-            mime_type=document.mime_type,
-            metadata=document.metadata,
-        )
+        return DocumentResponse.model_validate(document, from_attributes=True)
     except Exception as e:
         logger.error(f"Document creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -133,17 +85,7 @@ async def get_document(
     current_user: User = Depends(get_current_user)
 ):
     """Получение документа (с проверкой прав доступа)"""
-    return DocumentResponse(
-        id=document.id,
-        title=document.title,
-        file_name=document.file_name,
-        document_type=document.document_type,
-        version=document.version,
-        status=document.status,
-        created_at=document.created_at.isoformat(),
-        mime_type=document.mime_type,
-        metadata=document.metadata,
-    )
+    return DocumentResponse.model_validate(document, from_attributes=True)
 
 
 @router.get("/documents", response_model=List[DocumentResponse])
@@ -190,23 +132,10 @@ async def search_documents(
             limit=limit
         )
     
-    return [
-        DocumentResponse(
-            id=d.id,
-            title=d.title,
-            file_name=d.file_name,
-            document_type=d.document_type,
-            version=d.version,
-            status=d.status,
-            created_at=d.created_at.isoformat(),
-            mime_type=d.mime_type,
-            metadata=d.metadata,
-        )
-        for d in documents
-    ]
+    return [DocumentResponse.model_validate(d, from_attributes=True) for d in documents]
 
 
-@router.get("/documents/{document_id}/versions", response_model=List[VersionResponse])
+@router.get("/documents/{document_id}/versions", response_model=List[DocumentVersionResponse])
 async def get_document_versions(
     document_id: int,
     document: Document = Depends(require_document_permission("read")),
@@ -217,15 +146,7 @@ async def get_document_versions(
     service = SODService(db)
     versions = service.get_document_versions(document_id)
     
-    return [
-        VersionResponse(
-            id=v.id,
-            version_number=v.version_number,
-            change_description=v.change_description,
-            created_at=v.created_at.isoformat()
-        )
-        for v in versions
-    ]
+    return [DocumentVersionResponse.model_validate(v, from_attributes=True) for v in versions]
 
 
 @router.post("/documents/{document_id}/versions")
@@ -305,7 +226,7 @@ async def revert_document(
 @router.patch("/documents/{document_id}/metadata", response_model=DocumentResponse)
 async def update_document_metadata(
     document_id: int,
-    request: UpdateMetadataRequest,
+    request: DocumentMetadataUpdate,
     document: Document = Depends(require_document_permission("write")),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -320,17 +241,7 @@ async def update_document_metadata(
             linked_documents=request.linked_document_ids,
             updated_by=current_user.id,
         )
-        return DocumentResponse(
-            id=updated.id,
-            title=updated.title,
-            file_name=updated.file_name,
-            document_type=updated.document_type,
-            version=updated.version,
-            status=updated.status,
-            created_at=updated.created_at.isoformat(),
-            mime_type=updated.mime_type,
-            metadata=updated.metadata,
-        )
+        return DocumentResponse.model_validate(updated, from_attributes=True)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -338,7 +249,7 @@ async def update_document_metadata(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/documents/{document_id}/compare", response_model=VersionCompareResponse)
+@router.get("/documents/{document_id}/compare", response_model=DocumentVersionCompareResponse)
 async def compare_document_versions(
     document_id: int,
     base_version: int = Query(..., gt=0),
@@ -358,7 +269,7 @@ async def compare_document_versions(
             base_version=base_version,
             target_version=target_version
         )
-        return comparison
+        return DocumentVersionCompareResponse(**comparison)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

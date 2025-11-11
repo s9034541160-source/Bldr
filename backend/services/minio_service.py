@@ -149,6 +149,38 @@ class MinIOService:
             logger.error(f"Error generating URL: {e}")
             raise
 
+    def ensure_project_structure(self, project_prefix: str) -> None:
+        """
+        Создаёт базовую структуру папок проекта во всех необходимых бакетах.
+
+        Args:
+            project_prefix: каталог проекта (например, projects/<uuid>)
+        """
+        placeholders = {
+            "documents": ["incoming", "processed", "contracts"],
+            "templates": [project_prefix],
+            "exports": [project_prefix],
+        }
+
+        for bucket, folders in placeholders.items():
+            try:
+                self.ensure_bucket(bucket)
+                for folder in folders:
+                    prefix = f"{project_prefix}/{folder}".rstrip("/") if bucket != "templates" else folder.rstrip("/")
+                    object_name = f"{prefix}/.keep"
+                    try:
+                        self.client.put_object(
+                            bucket,
+                            object_name,
+                            data=BytesIO(b""),
+                            length=0,
+                        )
+                    except S3Error as exc:
+                        if exc.code != "BucketAlreadyOwnedByYou":
+                            logger.debug("Placeholder upload failed for %s/%s: %s", bucket, object_name, exc)
+            except Exception as exc:
+                logger.warning("Failed to ensure project structure in bucket %s: %s", bucket, exc)
+
 
 # Глобальный экземпляр сервиса
 minio_service = MinIOService()

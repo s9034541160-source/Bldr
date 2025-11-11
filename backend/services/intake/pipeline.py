@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from backend.config.settings import settings
 from backend.services.intake.email_handler import EmailIntakeHandler
 from backend.services.intake.google_forms import GoogleFormsIntakeParser
+from backend.services.intake.google_forms_service import GoogleFormsService
 from backend.services.intake.models import IncomingRequest, RequestChannel
 from backend.services.intake.telegram_handler import telegram_handler_from_settings
 
@@ -23,13 +24,22 @@ class IntakePipeline:
 
     email_handler: EmailIntakeHandler
     forms_parser: GoogleFormsIntakeParser
+    forms_service: Optional[GoogleFormsService]
     telegram_handler = telegram_handler_from_settings()
 
     @classmethod
     def from_settings(cls) -> "IntakePipeline":
         email_handler = EmailIntakeHandler.from_settings()
         forms_parser = GoogleFormsIntakeParser()
-        return cls(email_handler=email_handler, forms_parser=forms_parser)
+        forms_service: Optional[GoogleFormsService] = None
+
+        if settings.GOOGLE_SERVICE_ACCOUNT_JSON and settings.GOOGLE_FORMS_SPREADSHEET_ID:
+            try:
+                forms_service = GoogleFormsService.from_settings(parser=forms_parser)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Google Forms integration disabled: %s", exc)
+
+        return cls(email_handler=email_handler, forms_parser=forms_parser, forms_service=forms_service)
 
     def parse_payload(self, payload: Dict[str, Any]) -> IncomingRequest:
         channel_value = payload.get("channel")
@@ -55,6 +65,15 @@ class IntakePipeline:
                 handler = self.telegram_handler
                 return handler.parse_update(update)
         raise ValueError(f"Unsupported channel {channel}")
+
+    def fetch_google_forms_requests(self, *, since_row: Optional[int] = None) -> List[IncomingRequest]:
+        """
+        Загрузить заявки из Google Forms через Google Sheets API.
+        """
+        if not self.forms_service:
+            raise RuntimeError("Google Forms service is not configured")
+
+        return self.forms_service.fetch_requests(since_row=since_row)
 
 
 __all__ = ["IntakePipeline"]

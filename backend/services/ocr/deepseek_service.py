@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class DeepseekOCRService:
-    """Wrapper over DeepSeek multimodal model for OCR extraction."""
+    """Обёртка над мультимодальной моделью DeepSeek для OCR и семантического анализа."""
 
     def __init__(self) -> None:
         self.model_id = settings.DEEPSEEK_OCR_MODEL
@@ -45,25 +45,44 @@ class DeepseekOCRService:
         FastLanguageModel.for_inference(self._model)
         self._processor = AutoProcessor.from_pretrained(self.model_id)
 
-    def extract_text(self, image_bytes: bytes) -> str:
+    def extract_text(self, image_bytes: bytes, prompt: Optional[str] = None, max_new_tokens: Optional[int] = None) -> str:
+        """
+        Распознаёт текст на изображении, выполняя при необходимости дополнительную инструкцию.
+
+        Args:
+            image_bytes: Байтовое представление изображения.
+            prompt: Пользовательская инструкция для модели. Если не указана, применяется стандартный OCR-промпт.
+            max_new_tokens: Ограничение на количество генерируемых токенов (при None используется значение из настроек).
+
+        Returns:
+            Распознанный текст/JSON, приведённый моделью.
+        """
         if not image_bytes:
             return ""
         self._load()
         assert self._processor is not None
+        instruction = prompt or self.prompt
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         inputs = self._processor(
             images=image,
-            text=self.prompt,
+            text=instruction,
             return_tensors="pt",
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        tokens_limit = max_new_tokens or self.max_new_tokens
         with torch.inference_mode():
             output_ids = self._model.generate(
                 **inputs,
-                max_new_tokens=self.max_new_tokens,
+                max_new_tokens=tokens_limit,
             )
         generated = self._tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         return (generated[0] if generated else "").strip()
+
+    def extract_structured(self, image_bytes: bytes, instruction: str, *, max_new_tokens: Optional[int] = None) -> str:
+        """
+        Выполняет OCR и просит модель вернуть структурированные данные (например, JSON).
+        """
+        return self.extract_text(image_bytes, prompt=instruction, max_new_tokens=max_new_tokens)
 
 
 @lru_cache(maxsize=1)

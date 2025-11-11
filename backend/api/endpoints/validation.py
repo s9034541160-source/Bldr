@@ -91,12 +91,5 @@ async def get_validation_metrics(
     current_user: User = Depends(get_current_user)
 ):
     """Получение метрик валидации"""
-    # TODO: Реализовать сбор метрик из Redis/БД
-    return {
-        "total_validations": 0,
-        "validated_count": 0,
-        "requires_verification_count": 0,
-        "average_discrepancy": 0.0,
-        "average_confidence": 0.0
-    }
+    return validation_controller.get_metrics()
 

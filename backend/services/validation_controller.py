@@ -2,6 +2,7 @@
 Контроллер достоверности для двухуровневой валидации ИИ
 """
 
+# ... existing imports ...
 from typing import Dict, Any, Optional, List
 from backend.services.rag_service import rag_service
 from backend.core.model_manager import model_manager
@@ -11,6 +12,12 @@ import hashlib
 import json
 
 logger = logging.getLogger(__name__)
+
+METRIC_TOTAL_KEY = "validation:metrics:total"
+METRIC_VALIDATED_KEY = "validation:metrics:validated"
+METRIC_REQUIRES_KEY = "validation:metrics:requires_verification"
+METRIC_SUM_DISCREPANCY_KEY = "validation:metrics:sum_discrepancy"
+METRIC_SUM_CONFIDENCE_KEY = "validation:metrics:sum_confidence"
 
 
 class ValidationController:
@@ -92,6 +99,7 @@ class ValidationController:
         if requires_verification:
             self._log_discrepancy(query, llm_response, discrepancy, rag_results)
         
+        self._update_metrics(result)
         return result
     
     def _calculate_discrepancy(
@@ -211,6 +219,51 @@ class ValidationController:
             redis_service.set(discrepancy_key, log_entry, ex=86400 * 7)  # 7 дней
         except Exception as e:
             logger.warning(f"Failed to log discrepancy: {e}")
+
+    def _update_metrics(self, result: Dict[str, Any]) -> None:
+        try:
+            redis_service.incr(METRIC_TOTAL_KEY)
+            if result.get("requires_verification"):
+                redis_service.incr(METRIC_REQUIRES_KEY)
+            else:
+                redis_service.incr(METRIC_VALIDATED_KEY)
+            discrepancy = float(result.get("discrepancy") or 0.0)
+            confidence = float(result.get("confidence") or 0.0)
+            redis_service.incrbyfloat(METRIC_SUM_DISCREPANCY_KEY, discrepancy)
+            redis_service.incrbyfloat(METRIC_SUM_CONFIDENCE_KEY, confidence)
+        except Exception as exc:
+            logger.warning("Failed to update validation metrics: %s", exc)
+
+    def get_metrics(self) -> Dict[str, float]:
+        def _get_int(key: str) -> int:
+            value = redis_service.get(key)
+            return int(value) if value is not None else 0
+
+        def _get_float(key: str) -> float:
+            value = redis_service.get(key)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        total = _get_int(METRIC_TOTAL_KEY)
+        validated = _get_int(METRIC_VALIDATED_KEY)
+        requires = _get_int(METRIC_REQUIRES_KEY)
+        sum_discrepancy = _get_float(METRIC_SUM_DISCREPANCY_KEY)
+        sum_confidence = _get_float(METRIC_SUM_CONFIDENCE_KEY)
+
+        average_discrepancy = sum_discrepancy / total if total else 0.0
+        average_confidence = sum_confidence / total if total else 0.0
+        hallucination_rate = requires / total if total else 0.0
+
+        return {
+            "total_validations": float(total),
+            "validated_count": float(validated),
+            "requires_verification_count": float(requires),
+            "average_discrepancy": average_discrepancy,
+            "average_confidence": average_confidence,
+            "hallucination_rate": hallucination_rate,
+        }
 
 
 # Глобальный экземпляр контроллера валидации

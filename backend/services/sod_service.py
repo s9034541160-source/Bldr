@@ -336,8 +336,8 @@ class SODService:
             file_path=file_path,
             mime_type=new_mime_type
         )
-        document.metadata = {
-            **(document.metadata or {}),
+        document.metadata_json = {
+            **(document.metadata_json or {}),
             **(metadata or {}),
             "classification": classification,
             "extracted": extracted_metadata,
@@ -435,7 +435,7 @@ class SODService:
         if not document:
             raise ValueError(f"Document {document_id} not found")
 
-        current_metadata = document.metadata or {}
+        current_metadata = document.metadata_json or {}
 
         if metadata is not None:
             current_metadata["custom"] = metadata
@@ -446,7 +446,7 @@ class SODService:
         if linked_documents is not None:
             current_metadata["linked_documents"] = linked_documents
 
-        document.metadata = current_metadata
+        document.metadata_json = current_metadata
         if updated_by:
             document.updated_by = updated_by
 

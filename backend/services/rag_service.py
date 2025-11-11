@@ -10,6 +10,51 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterable, Tuple
 
+try:  # pragma: no cover - compat shim
+    from huggingface_hub import cached_download  # type: ignore[attr-defined]
+except ImportError:  # huggingface_hub >=0.36 removed cached_download
+    from urllib.parse import urlparse
+
+    from huggingface_hub import hf_hub_download
+    import huggingface_hub as _hf
+
+    def _hf_cached_download(*, url, library_name=None, library_version=None, user_agent=None, force_filename=None,
+                            cache_dir=None, legacy_cache_layout=False, proxies=None, etag_timeout=None, **kwargs):
+        parsed = urlparse(url)
+        if "huggingface.co" not in parsed.netloc:
+            raise ValueError(f"Unsupported download url: {url}")
+
+        path_parts = parsed.path.strip("/").split("/")
+        if len(path_parts) < 4 or path_parts[2] != "resolve":
+            raise ValueError(f"Unexpected Hugging Face URL format: {url}")
+
+        repo_id = "/".join(path_parts[:2])
+        revision = path_parts[3]
+        filename = "/".join(path_parts[4:])
+
+        kwargs = {
+            "repo_id": repo_id,
+            "filename": filename,
+            "revision": revision,
+            "cache_dir": cache_dir,
+            "force_filename": force_filename,
+            "library_name": library_name,
+            "library_version": library_version,
+            "user_agent": user_agent,
+            "proxies": proxies,
+        }
+        # drop None values and arguments unsupported by current hub version
+        cleaned_kwargs = {key: value for key, value in kwargs.items() if value is not None}
+
+        try:
+            return hf_hub_download(**cleaned_kwargs)
+        except TypeError:
+            # remove proxies if unsupported
+            cleaned_kwargs.pop("proxies", None)
+            return hf_hub_download(**cleaned_kwargs)
+    cached_download = _hf_cached_download  # type: ignore[assignment]
+    _hf.cached_download = cached_download  # type: ignore[attr-defined]
+
 from sentence_transformers import SentenceTransformer
 from qdrant_client.models import PointStruct
 

@@ -26,7 +26,7 @@ class Document(Base):
     parent_version_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
     
     # Метаданные
-    metadata = Column(JSON, nullable=True)  # Дополнительные метаданные
+    metadata_json = Column(JSON, nullable=True)  # Дополнительные метаданные
     
     # Связи
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)

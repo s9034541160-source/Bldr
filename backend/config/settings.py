@@ -3,7 +3,7 @@
 """
 
 import os
-from typing import Optional
+from typing import Optional, List
 from pydantic_settings import BaseSettings
 
 
@@ -87,6 +87,20 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_WEBHOOK_URL: Optional[str] = os.getenv("TELEGRAM_WEBHOOK_URL")
     
+    # SMTP / Email notifications
+    SMTP_HOST: Optional[str] = os.getenv("SMTP_HOST")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
+    SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "True").lower() == "true"
+    EMAIL_FROM: Optional[str] = os.getenv("EMAIL_FROM")
+    EMAIL_REPLY_TO: Optional[str] = os.getenv("EMAIL_REPLY_TO")
+    LEADERSHIP_NOTIFICATION_EMAILS: List[str] = (
+        os.getenv("LEADERSHIP_NOTIFICATION_EMAILS", "").split(",")
+        if os.getenv("LEADERSHIP_NOTIFICATION_EMAILS")
+        else []
+    )
+
     # Email intake (IMAP)
     IMAP_HOST: Optional[str] = os.getenv("IMAP_HOST")
     IMAP_PORT: int = int(os.getenv("IMAP_PORT", "993"))
@@ -100,9 +114,37 @@ class Settings(BaseSettings):
     GOOGLE_FORMS_SPREADSHEET_ID: Optional[str] = os.getenv("GOOGLE_FORMS_SPREADSHEET_ID")
     GOOGLE_FORMS_RANGE: str = os.getenv("GOOGLE_FORMS_RANGE", "Форма!A:Z")
     
+    # Yandex Geocoder
+    YANDEX_GEOCODER_API_KEY: Optional[str] = os.getenv("YANDEX_GEOCODER_API_KEY")
+    YANDEX_GEOCODER_LANG: str = os.getenv("YANDEX_GEOCODER_LANG", "ru_RU")
+    YANDEX_GEOCODER_URL: str = os.getenv("YANDEX_GEOCODER_URL", "https://geocode-maps.yandex.ru/1.x/")
+
+    # Проекты
+    PROJECT_CODE_PREFIX: str = os.getenv("PROJECT_CODE_PREFIX", "PRJ")
+    DEFAULT_PROJECT_OWNER_ID: int = int(os.getenv("DEFAULT_PROJECT_OWNER_ID", "1"))
+    DEFAULT_PROJECT_MANAGER_ID: Optional[int] = (
+        int(owner) if (owner := os.getenv("DEFAULT_PROJECT_MANAGER_ID")) else None
+    )
+    PROJECT_MANAGER_ROTATION_WINDOW_DAYS: int = int(os.getenv("PROJECT_MANAGER_ROTATION_WINDOW_DAYS", "30"))
+    
+    # LLM Providers
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
+    LLM_LOCAL_API_URL: str = os.getenv("LLM_LOCAL_API_URL", "http://localhost:1234/v1")
+    LLM_LOCAL_MODEL: str = os.getenv("LLM_LOCAL_MODEL", "LMStudio")
+    LLM_REMOTE_API_URL: str = os.getenv("LLM_REMOTE_API_URL", "https://api.openai.com/v1")
+    LLM_REMOTE_API_KEY: str = os.getenv("LLM_REMOTE_API_KEY", "")
+    LLM_REMOTE_MODEL: str = os.getenv("LLM_REMOTE_MODEL", "gpt-4o-mini")
     # 1С Integration
     ONEC_API_URL: Optional[str] = os.getenv("ONEC_API_URL")
     ONEC_API_TOKEN: Optional[str] = os.getenv("ONEC_API_TOKEN")
+
+    # Development Zones
+    ALLOWED_DEVELOPMENT_ZONES: List[str] = (
+        os.getenv("ALLOWED_DEVELOPMENT_ZONES", "жил,пром,технопарк").split(",")
+    )
+    RESTRICTED_DEVELOPMENT_ZONES: List[str] = (
+        os.getenv("RESTRICTED_DEVELOPMENT_ZONES", "заповед,лес,садов,природ").split(",")
+    )
 
     # DeepSeek OCR / Unsloth
     DEEPSEEK_OCR_MODEL: str = os.getenv("DEEPSEEK_OCR_MODEL", "deepseek-ai/DeepSeek-VL2")
