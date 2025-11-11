@@ -6,6 +6,8 @@ import os
 from typing import Optional, List
 from pydantic_settings import BaseSettings
 
+_DEFAULT_MANAGER_ENV = os.getenv("DEFAULT_PROJECT_MANAGER_ID")
+
 
 class Settings(BaseSettings):
     """Настройки приложения"""
@@ -128,7 +130,7 @@ class Settings(BaseSettings):
     PROJECT_CODE_PREFIX: str = os.getenv("PROJECT_CODE_PREFIX", "PRJ")
     DEFAULT_PROJECT_OWNER_ID: int = int(os.getenv("DEFAULT_PROJECT_OWNER_ID", "1"))
     DEFAULT_PROJECT_MANAGER_ID: Optional[int] = (
-        int(owner) if (owner := os.getenv("DEFAULT_PROJECT_MANAGER_ID")) else None
+        int(_DEFAULT_MANAGER_ENV) if _DEFAULT_MANAGER_ENV else None
     )
     PROJECT_MANAGER_ROTATION_WINDOW_DAYS: int = int(os.getenv("PROJECT_MANAGER_ROTATION_WINDOW_DAYS", "30"))
     
