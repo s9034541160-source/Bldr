@@ -75,6 +75,7 @@ structlog==23.2.0
 # Утилиты
 python-dotenv==1.0.0
 pytz==2025.2
+networkx==3.2.1
 
 # Тестирование
 pytest==7.4.3
