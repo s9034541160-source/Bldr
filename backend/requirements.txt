@@ -76,6 +76,7 @@ structlog==23.2.0
 python-dotenv==1.0.0
 pytz==2025.2
 networkx==3.2.1
+matplotlib==3.9.2
 
 # Тестирование
 pytest==7.4.3
