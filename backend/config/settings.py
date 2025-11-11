@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_WEBHOOK_URL: Optional[str] = os.getenv("TELEGRAM_WEBHOOK_URL")
+    TELEGRAM_PRICE_REQUEST_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_PRICE_REQUEST_CHAT_ID")
     
     # SMTP / Email notifications
     SMTP_HOST: Optional[str] = os.getenv("SMTP_HOST")

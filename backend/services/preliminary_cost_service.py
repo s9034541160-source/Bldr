@@ -30,14 +30,20 @@ class WorkCostEntry:
     source_line: Optional[str] = None
     code: Optional[str] = None
     category: Optional[str] = None
+    group: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class CostSummary:
-    total_cost: Decimal
+    total_cost: Decimal  # базовая стоимость (без накладных и прибыли)
+    overhead_cost: Decimal
+    profit: Decimal
+    grand_total: Decimal
     by_category: Dict[str, Decimal] = field(default_factory=dict)
+    group_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     missing_prices: List[str] = field(default_factory=list)
+    margin_percent: float = 0.0
 
 
 @dataclass(slots=True)
@@ -62,11 +68,14 @@ class PreliminaryCostService:
         cost_entries: List[WorkCostEntry] = []
         total_cost = Decimal("0")
         cost_by_category: Dict[str, Decimal] = {}
+        group_breakdown: Dict[str, Decimal] = {"materials": Decimal("0"), "labor": Decimal("0"), "machines": Decimal("0")}
         missing_prices: List[str] = []
 
         for entry in entries:
             material_name = entry.name.lower()
             price = market_price_service.get_price(material_name, unit=entry.unit)
+
+            group = self._determine_group(entry.category)
 
             if not price:
                 missing_prices.append(entry.name)
@@ -80,17 +89,20 @@ class PreliminaryCostService:
                         source_line=entry.source_line,
                         code=entry.code,
                         category=entry.category,
+                        group=group,
                         warnings=["Цена не найдена в справочнике."],
                     )
                 )
                 continue
 
-            cost = entry.quantity * price.price_per_unit
+            cost = (entry.quantity * price.price_per_unit).quantize(Decimal("0.01"))
             total_cost += cost
 
             category = entry.category or "Прочее"
             cost_by_category.setdefault(category, Decimal("0"))
             cost_by_category[category] += cost
+
+            group_breakdown[group] += cost
 
             cost_entries.append(
                 WorkCostEntry(
@@ -102,13 +114,24 @@ class PreliminaryCostService:
                     source_line=entry.source_line,
                     code=entry.code,
                     category=entry.category,
+                    group=group,
                 )
             )
 
+        overhead = (total_cost * Decimal("0.18")).quantize(Decimal("0.01"))
+        profit = ((total_cost + overhead) * Decimal("0.10")).quantize(Decimal("0.01"))
+        grand_total = (total_cost + overhead + profit).quantize(Decimal("0.01"))
+        margin_percent = float((profit / grand_total * Decimal("100")).quantize(Decimal("0.01")) if grand_total else Decimal("0"))
+
         summary = CostSummary(
             total_cost=total_cost,
+            overhead_cost=overhead,
+            profit=profit,
+            grand_total=grand_total,
             by_category=cost_by_category,
+            group_breakdown=group_breakdown,
             missing_prices=missing_prices,
+            margin_percent=margin_percent,
         )
 
         result = PreliminaryCostResult(
@@ -129,6 +152,14 @@ class PreliminaryCostService:
 
         summary = WorkVolumeSummary(totals=totals, total_quantity=total_quantity)
         return WorkVolumeResult(entries=entries, summary=summary, warnings=[])
+
+    def _determine_group(self, category: Optional[str]) -> str:
+        cat = (category or "").lower()
+        if any(token in cat for token in ["маш", "механ", "техника"]):
+            return "machines"
+        if any(token in cat for token in ["труд", "работ", "персонал"]):
+            return "labor"
+        return "materials"
 
 
 preliminary_cost_service = PreliminaryCostService()

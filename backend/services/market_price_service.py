@@ -8,8 +8,9 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from backend.services.integrations.supplier_prices import SUPPLIERS, fetch_supplier_prices
 from backend.services.redis_service import redis_service
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,18 @@ class MarketPriceService:
     def __init__(self, ttl_hours: int = 24) -> None:
         self.ttl = int(timedelta(hours=ttl_hours).total_seconds())
 
-    def get_price(self, material: str, *, unit: Optional[str] = None) -> Optional[MaterialPrice]:
+    def get_price(
+        self,
+        material: str,
+        *,
+        unit: Optional[str] = None,
+        country: Optional[str] = None,
+        priority_suppliers: Optional[Iterable[str]] = None,
+    ) -> Optional[MaterialPrice]:
         material_norm = self._normalize(material)
         unit_norm = (unit or "").lower()
-        cache_key = self._cache_key(material_norm, unit_norm)
+        country_norm = (country or "").lower()
+        cache_key = self._cache_key(material_norm, unit_norm, country_norm)
 
         cached = redis_service.get(cache_key)
         if cached:
@@ -68,16 +77,33 @@ class MarketPriceService:
         price = self._lookup_stub(material_norm, unit_norm)
         if price:
             redis_service.set(cache_key, price.to_dict(), ex=self.ttl)
+            return price
+
+        price = self._query_suppliers(material_norm, unit_norm, country_norm, priority_suppliers)
+        if price:
+            redis_service.set(cache_key, price.to_dict(), ex=self.ttl)
         return price
 
-    def get_prices_batch(self, materials: Iterable[str]) -> Dict[str, Optional[MaterialPrice]]:
+    def get_prices_batch(
+        self,
+        materials: Iterable[str],
+        *,
+        unit: Optional[str] = None,
+        country: Optional[str] = None,
+    ) -> Dict[str, Optional[MaterialPrice]]:
         result: Dict[str, Optional[MaterialPrice]] = {}
         for name in materials:
-            result[name] = self.get_price(name)
+            result[name] = self.get_price(name, unit=unit, country=country)
         return result
 
     def invalidate_cache(self, material: str, unit: Optional[str] = None) -> None:
-        redis_service.delete(self._cache_key(self._normalize(material), (unit or "").lower()))
+        redis_service.delete(
+            self._cache_key(
+                self._normalize(material),
+                (unit or "").lower(),
+                "",
+            )
+        )
 
     # ------------------------------------------------------------------ #
     # Stub data
@@ -97,6 +123,43 @@ class MarketPriceService:
             source="stub_database",
         )
 
+    def _query_suppliers(
+        self,
+        material: str,
+        unit: str,
+        country: str,
+        priority_suppliers: Optional[Iterable[str]],
+    ) -> Optional[MaterialPrice]:
+        supplier_list = list(priority_suppliers) if priority_suppliers else []
+        supplier_list.extend(s for s in SUPPLIERS if s not in supplier_list)
+
+        best_price: Optional[MaterialPrice] = None
+        for supplier_id in supplier_list:
+            offers = fetch_supplier_prices(
+                supplier_id,
+                material=material,
+                unit=unit or "шт",
+                country=country or "ru",
+            )
+            for offer in offers:
+                price = self._parse_supplier_price(offer)
+                if price and (best_price is None or price.price_per_unit < best_price.price_per_unit):
+                    best_price = price
+        return best_price
+
+    def _parse_supplier_price(self, payload: Dict[str, Any]) -> Optional[MaterialPrice]:
+        try:
+            return MaterialPrice(
+                name=self._normalize(payload["name"]),
+                unit=payload.get("unit", "шт"),
+                price_per_unit=Decimal(str(payload["price_per_unit"])),
+                currency=payload.get("currency", DEFAULT_CURRENCY),
+                source=payload.get("supplier", "external"),
+            )
+        except (KeyError, InvalidOperation, TypeError) as exc:
+            logger.debug("Supplier payload is invalid: %s (%s)", payload, exc)
+            return None
+
     def _stub_database(self) -> Dict[tuple[str, str], Decimal]:
         return {
             ("бетон м300", "м³"): Decimal("6200"),
@@ -112,8 +175,11 @@ class MarketPriceService:
     # ------------------------------------------------------------------ #
     # Utilities
     # ------------------------------------------------------------------ #
-    def _cache_key(self, material: str, unit: str) -> str:
-        return f"{CACHE_PREFIX}:{material}:{unit or 'шт'}"
+    def _cache_key(self, material: str, unit: str, country: str) -> str:
+        key = f"{CACHE_PREFIX}:{material}:{unit or 'шт'}"
+        if country:
+            key += f":{country}"
+        return key
 
     def _normalize(self, value: str) -> str:
         return value.strip().lower()

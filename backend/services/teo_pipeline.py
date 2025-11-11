@@ -8,12 +8,15 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from backend.models import SessionLocal
+from backend.models.gesn import GESNNorm
 from backend.services.gesn_retrieval import GESNRetrievalService, RetrievalCandidate
 from backend.services.gesn_verification import GESNVerificationService, VerificationRequest, VerificationResult
 from backend.services.preliminary_cost_service import PreliminaryCostResult, PreliminaryCostService
@@ -33,6 +36,24 @@ class MatchedNorm:
 
 
 @dataclass(slots=True)
+class LaborEntry:
+    volume_name: str
+    norm_code: str
+    labor_hours: float
+    worker_equivalent: float
+    resources: List[Dict[str, float]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class LaborSummary:
+    entries: List[LaborEntry]
+    total_labor_hours: float
+    total_worker_equivalent: float
+    worker_days: float
+    schedules: Dict[str, Dict[str, float]]
+
+
+@dataclass(slots=True)
 class PipelineResult:
     """Комплексный итог работы конвейера."""
 
@@ -40,6 +61,7 @@ class PipelineResult:
     matches: List[MatchedNorm]
     cost: PreliminaryCostResult
     extraction: WorkVolumeResult
+    labor: Optional[LaborSummary]
     warnings: List[str] = field(default_factory=list)
 
 
@@ -112,12 +134,14 @@ class PreliminaryTEOPipeline:
 
         cost_result = self._cost_service.estimate_from_entries(entries, extraction)
         warnings.extend(cost_result.extraction.warnings)  # передаём предупреждения экстрактора
+        labor_summary = self._calculate_labor(matches)
 
         return PipelineResult(
             volumes=entries,
             matches=matches,
             cost=cost_result,
             extraction=extraction or cost_result.extraction,
+            labor=labor_summary,
             warnings=warnings,
         )
 
@@ -151,4 +175,80 @@ class PreliminaryTEOPipeline:
             candidates=[c.norm for c in candidates],
         )
         return self._verification_service.verify(request)
+
+    def _calculate_labor(self, matches: List[MatchedNorm]) -> Optional[LaborSummary]:
+        if not matches:
+            return None
+        session = self.session
+        total_hours = 0.0
+        total_workers = 0.0
+        labor_entries: List[LaborEntry] = []
+        shift_hours = 8.0
+
+        for match in matches:
+            norm = (
+                session.query(GESNNorm)
+                .options(selectinload(GESNNorm.resources))
+                .filter(GESNNorm.code == match.norm_code)
+                .one_or_none()
+            )
+            if not norm:
+                continue
+            labor_resources = [
+                resource
+                for resource in norm.resources
+                if resource.resource_type.lower() in {"labor", "труд", "рабочие"}
+                and resource.quantity is not None
+            ]
+            if not labor_resources:
+                continue
+            quantity = float(match.volume.quantity)
+            entry_hours = 0.0
+            resource_details: List[Dict[str, float]] = []
+            for resource in labor_resources:
+                hours = float(resource.quantity) * quantity
+                entry_hours += hours
+                resource_details.append(
+                    {
+                        "quantity_per_unit": float(resource.quantity),
+                        "hours_total": hours,
+                        "name": resource.name,
+                    }
+                )
+            if entry_hours == 0.0:
+                continue
+            total_hours += entry_hours
+            workers = entry_hours / shift_hours
+            total_workers += workers
+            labor_entries.append(
+                LaborEntry(
+                    volume_name=match.volume.name,
+                    norm_code=match.norm_code,
+                    labor_hours=entry_hours,
+                    worker_equivalent=workers,
+                    resources=resource_details,
+                )
+            )
+        if not labor_entries:
+            return None
+        worker_days = total_hours / shift_hours
+        schedules = {
+            "45_15": {
+                "cycle_days": 60,
+                "work_days": 45,
+                "required_workers": float(max(1, math.ceil(worker_days / 45))),
+            },
+            "30_15": {
+                "cycle_days": 45,
+                "work_days": 30,
+                "required_workers": float(max(1, math.ceil(worker_days / 30))),
+            },
+        }
+        return LaborSummary(
+            entries=labor_entries,
+            total_labor_hours=total_hours,
+            total_worker_equivalent=total_workers,
+            worker_days=worker_days,
+            schedules=schedules,
+        )
 

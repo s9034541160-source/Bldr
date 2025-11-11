@@ -100,6 +100,21 @@ class ProjectService:
                 }
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate preliminary TEO report for %s: %s", project.code, exc)
+            try:
+                excel_bytes = teo_report_service.build_cost_workbook(project, analysis)
+                excel_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.xlsx"
+                minio_service.upload_file(
+                    bucket_name="exports",
+                object_name=excel_object,
+                    data=excel_bytes,
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                integration_updates["teo_cost_excel"] = {
+                    "path": excel_object,
+                    "generated_at": datetime.utcnow().isoformat(),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to generate preliminary TEO Excel for %s: %s", project.code, exc)
 
         try:
             export_result = onec_export_service.export(project, metadata, analysis)
@@ -244,7 +259,7 @@ class ProjectService:
 
         cost_data = analysis.get("cost")
         if isinstance(cost_data, dict):
-            total_cost = cost_data.get("total_cost")
+            total_cost = cost_data.get("grand_total") or cost_data.get("total_cost")
             if total_cost is not None:
                 try:
                     project.preliminary_budget = Decimal(str(total_cost))

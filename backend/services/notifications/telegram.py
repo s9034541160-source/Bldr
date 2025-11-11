@@ -46,6 +46,31 @@ class ManagerNotificationService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to send Telegram notification to manager %s: %s", manager.id, exc)
 
+    def notify_procurement(self, *, materials: list[str], context: Optional[str] = None) -> None:
+        if not self.bot_token:
+            logger.debug("Telegram bot token not configured; skipping procurement notification.")
+            return
+        chat_id = settings.TELEGRAM_PRICE_REQUEST_CHAT_ID
+        if not chat_id:
+            logger.debug("TELEGRAM_PRICE_REQUEST_CHAT_ID not configured; skipping procurement notification.")
+            return
+        if not materials:
+            return
+        body_lines = ["⚠️ Требуются цены на материалы:", ""]
+        body_lines.extend(f"• {name}" for name in materials)
+        if context:
+            body_lines.extend(["", context])
+        message = "\n".join(body_lines)
+        try:
+            response = requests.post(
+                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": message},
+                timeout=10,
+            )
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to send procurement Telegram notification: %s", exc)
+
 
 manager_notification_service = ManagerNotificationService()
 

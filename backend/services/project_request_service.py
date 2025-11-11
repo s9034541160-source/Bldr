@@ -36,6 +36,8 @@ from backend.services.work_volume_sources import (
 from backend.services.project_timeline import ProjectTimelineEstimator
 from backend.services.teo_pipeline import PreliminaryTEOPipeline
 from backend.services.notifications.email_service import email_notification_service
+from backend.services.market_price_service import market_price_service
+from backend.services.notifications.telegram import manager_notification_service
 from backend.models.auth import User
 from backend.services.project_manager_rotation import ProjectManagerRotation
 
@@ -74,14 +76,23 @@ class ProjectRequestService:
         self._enrich_with_geocode(request, metadata)
         analysis = metadata.setdefault("analysis", {})
         work_volume_data, volume_entries = self._extract_work_volumes(request, attachments)
+        pending_manual_prices: List[str] = []
         if work_volume_data:
             analysis["work_volume"] = work_volume_data
             timeline = self._estimate_timeline(volume_entries, metadata)
             if timeline:
                 analysis["timeline"] = timeline
-            cost = self._estimate_preliminary_cost(volume_entries, metadata)
-            if cost:
-                analysis["cost"] = cost
+            bundle = self._estimate_preliminary_cost(volume_entries, metadata)
+            if bundle:
+                cost_info = bundle.get("cost")
+                labor_info = bundle.get("labor")
+                if cost_info:
+                    analysis["cost"] = cost_info
+                    pending_manual_prices = self._prefetch_market_prices(cost_info)
+                    if pending_manual_prices:
+                        analysis["cost"]["manual_price_requests"] = pending_manual_prices
+                if labor_info:
+                    analysis["labor"] = labor_info
 
         entity = ProjectRequest(
             channel=request.channel.value,
@@ -102,6 +113,8 @@ class ProjectRequestService:
         self.db.commit()
         self.db.refresh(entity)
         self._notify_parties(entity)
+        if pending_manual_prices:
+            self._notify_price_requests(entity, pending_manual_prices)
         logger.info("Registered project request %s from channel %s", entity.id, entity.channel)
         return entity
 
@@ -225,6 +238,21 @@ class ProjectRequestService:
             body_preview = request.body[:400].strip()
             parts.append(f"Описание: {body_preview}")
         return "\n".join(parts)
+
+    def _notify_price_requests(self, request: ProjectRequest, materials: List[str]) -> None:
+        if not materials:
+            return
+        context = f"Заявка #{request.id}: {request.subject or 'без темы'}"
+        manager_notification_service.notify_procurement(materials=materials[:20], context=context)
+        metadata = request.metadata_json or {}
+        analysis = metadata.setdefault("analysis", {})
+        cost_meta = analysis.setdefault("cost", {})
+        cost_meta["manual_price_requests_notified_at"] = datetime.utcnow().isoformat()
+        cost_meta["manual_price_requests_ack"] = materials[:20]
+        request.metadata_json = metadata
+        self.db.add(request)
+        self.db.commit()
+        self.db.refresh(request)
 
     def mark_processed(self, request_id: int, *, status: str = "processed") -> ProjectRequest:
         request = self.db.query(ProjectRequest).filter(ProjectRequest.id == request_id).one_or_none()
@@ -449,13 +477,66 @@ class ProjectRequestService:
             }
             for match in result.matches[:10]
         ]
-        return {
+
+        cost_payload = {
             "total_cost": float(cost_summary.total_cost),
             "by_category": {category: float(value) for category, value in cost_summary.by_category.items()},
             "missing_prices": cost_summary.missing_prices,
             "warnings": result.warnings,
             "matches": matches_payload,
         }
+
+        labor_payload: Optional[Dict[str, Any]] = None
+        if result.labor:
+            labor_payload = {
+                "total_labor_hours": result.labor.total_labor_hours,
+                "total_worker_equivalent": result.labor.total_worker_equivalent,
+                "worker_days": result.labor.worker_days,
+                "schedules": result.labor.schedules,
+                "entries": [
+                    {
+                        "volume_name": entry.volume_name,
+                        "norm_code": entry.norm_code,
+                        "labor_hours": entry.labor_hours,
+                        "worker_equivalent": entry.worker_equivalent,
+                        "resources": entry.resources,
+                    }
+                    for entry in result.labor.entries
+                ],
+                "assumptions": {"shift_hours": 8},
+            }
+
+        entries_payload = [
+            {
+                "name": e.name,
+                "quantity": float(e.quantity),
+                "unit": e.unit,
+                "cost": float(e.cost),
+                "category": e.category,
+                "group": e.group,
+                "price_per_unit": float(e.material_price.price_per_unit) if e.material_price else None,
+                "source": e.material_price.source if e.material_price else None,
+            }
+            for e in result.cost.entries
+        ]
+        cost_payload["entries"] = entries_payload
+
+        return {"cost": cost_payload, "labor": labor_payload}
+
+    def _prefetch_market_prices(self, cost_analysis: Dict[str, Any]) -> List[str]:
+        missing = cost_analysis.get("missing_prices") or cost_analysis.get("cost", {}).get("missing_prices") or []
+        if not missing:
+            return []
+        unresolved: List[str] = []
+        for name in missing[:20]:
+            try:
+                price = market_price_service.get_price(name)
+                if price is None:
+                    unresolved.append(name)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Prefetch price failed for %s: %s", name, exc)
+                unresolved.append(name)
+        return unresolved
 
 
 __all__ = ["ProjectRequestService"]
