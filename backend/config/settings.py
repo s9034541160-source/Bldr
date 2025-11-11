@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_WEBHOOK_URL: Optional[str] = os.getenv("TELEGRAM_WEBHOOK_URL")
     TELEGRAM_PRICE_REQUEST_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_PRICE_REQUEST_CHAT_ID")
+    TEO_APPROVAL_CHAT_IDS: List[str] = (
+        os.getenv("TEO_APPROVAL_CHAT_IDS", "").split(",") if os.getenv("TEO_APPROVAL_CHAT_IDS") else []
+    )
+    TEO_APPROVAL_ROUTE: Optional[str] = os.getenv("TEO_APPROVAL_ROUTE")
     
     # SMTP / Email notifications
     SMTP_HOST: Optional[str] = os.getenv("SMTP_HOST")

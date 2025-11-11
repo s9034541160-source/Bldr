@@ -5,12 +5,13 @@ API эндпоинты для запуска конвейера предвари
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.models import get_db
+from backend.models.project import Project
 from backend.schemas.teo import (
     CostEntrySchema,
     CostSummarySchema,
@@ -19,12 +20,15 @@ from backend.schemas.teo import (
     LaborEntrySchema,
     LaborSummarySchema,
     MatchedNormSchema,
+    TEOApprovalDecisionSchema,
+    TEOApprovalStatusSchema,
     TEORequestSchema,
     TEOResponseSchema,
     TravelSummarySchema,
     WorkVolumeSchema,
 )
 from backend.services.teo_pipeline import MatchedNorm, PipelineResult, PreliminaryTEOPipeline
+from backend.services.teo_approval_service import TEOApprovalService
 
 router = APIRouter(prefix="/teo", tags=["teo"])
 
@@ -153,5 +157,65 @@ def calculate_teo(payload: TEORequestSchema, db: Session = Depends(get_db)) -> T
         raise HTTPException(status_code=500, detail=f"Ошибка обработки ТЭО: {exc}") from exc
 
     return _serialize_pipeline_result(result)
+
+
+def _build_documents(project: Project) -> Dict[str, str]:
+    """
+    Возвращает ссылки на файлы предварительного ТЭО в MinIO.
+    """
+    documents: Dict[str, str] = {}
+    if project.preliminary_teo_path:
+        documents["docx"] = project.preliminary_teo_path
+        base = project.preliminary_teo_path.rsplit(".", 1)[0]
+        documents["pdf"] = f"{base}.pdf"
+        documents["xlsx"] = f"{base}.xlsx"
+    return documents
+
+
+def _build_analysis_stub(project: Project) -> Dict[str, Any]:
+    """
+    Формирует минимальный набор аналитики для уведомлений о согласовании.
+    """
+    payload: Dict[str, Any] = {"cost": {}, "timeline": {}}
+    if project.preliminary_budget is not None:
+        try:
+            payload["cost"]["grand_total"] = float(project.preliminary_budget)
+        except (TypeError, ValueError):
+            pass
+    if project.planned_duration_days is not None:
+        payload["timeline"]["estimated_duration_days"] = project.planned_duration_days
+    return payload
+
+
+@router.post(
+    "/projects/{project_id}/approval/decision",
+    response_model=TEOApprovalStatusSchema,
+    summary="Фиксация решения по согласованию ТЭО",
+)
+def record_teo_approval_decision(
+    project_id: int,
+    payload: TEOApprovalDecisionSchema,
+    db: Session = Depends(get_db),
+) -> TEOApprovalStatusSchema:
+    project: Optional[Project] = db.query(Project).filter(Project.id == project_id).one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Проект не найден.")
+
+    approval_service = TEOApprovalService(db)
+    approval_service.record_decision(
+        project,
+        role=payload.role,
+        decision=payload.decision,
+        actor=payload.actor,
+        comment=payload.comment,
+        documents=_build_documents(project),
+        analysis=_build_analysis_stub(project),
+    )
+
+    return TEOApprovalStatusSchema(
+        status=project.teo_approval_status,
+        route=project.teo_approval_route or [],
+        history=project.teo_approval_history or [],
+    )
 
 

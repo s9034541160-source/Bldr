@@ -5,6 +5,7 @@ SQLAlchemy модели для проектов
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Numeric, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import JSONB
 from backend.models import Base
 
 
@@ -28,6 +29,10 @@ class Project(Base):
     expected_completion = Column(Date, nullable=True)
     preliminary_budget = Column(Numeric(15, 2), nullable=True)
     preliminary_teo_path = Column(String, nullable=True)
+    teo_approval_status = Column(String, default="not_required", nullable=False)
+    teo_approval_route = Column(JSONB, nullable=True)
+    teo_approval_history = Column(JSONB, nullable=True)
+    teo_approved_at = Column(DateTime(timezone=True), nullable=True)
     
     # Даты
     start_date = Column(Date, nullable=True)

@@ -5,7 +5,7 @@ Pydantic схемы для эндпоинтов предварительного
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -123,5 +123,22 @@ class TEOResponseSchema(BaseModel):
     labor_summary: Optional[LaborSummarySchema] = None
     travel_summary: Optional[TravelSummarySchema] = None
     financial_summary: Optional[FinancialSummarySchema] = None
+
+
+class TEOApprovalDecisionSchema(BaseModel):
+    """Запрос на фиксацию решения по согласованию ТЭО."""
+
+    role: str
+    decision: Literal["approved", "rejected"]
+    actor: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class TEOApprovalStatusSchema(BaseModel):
+    """Статус согласования ТЭО."""
+
+    status: str
+    route: List[Dict[str, Any]]
+    history: List[Dict[str, Any]]
 
 

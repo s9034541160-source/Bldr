@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, Optional
 
 import requests
-from dicttoxml import dicttoxml
+from dicttoxml import dicttoxml  # type: ignore
 
 from backend.config.settings import settings
 from backend.models.project import Project
@@ -48,6 +48,9 @@ class OneCService:
                 "code": project.code,
                 "name": project.name,
                 "status": project.status,
+                "teo_approval_status": getattr(project, "teo_approval_status", None),
+                "teo_approved_at": project.teo_approved_at.isoformat() if project.teo_approved_at else None,
+                "teo_approval_route": getattr(project, "teo_approval_route", None),
                 "expected_start": project.expected_start.isoformat() if project.expected_start else None,
                 "expected_completion": project.expected_completion.isoformat()
                 if project.expected_completion

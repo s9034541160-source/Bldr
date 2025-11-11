@@ -82,9 +82,13 @@ class ProjectService:
             logger.warning("Failed to create project storage structure for %s: %s", project.code, exc)
 
         integration_updates: Dict[str, Any] = {}
+        approval_documents: Dict[str, str] = {}
 
         if analysis:
             report_bundle: Dict[str, bytes] = {}
+            docx_object: Optional[str] = None
+            pdf_object: Optional[str] = None
+            excel_object: Optional[str] = None
             try:
                 report_bundle = teo_report_service.generate_preliminary_bundle(project, analysis)
                 docx_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.docx"
@@ -111,8 +115,8 @@ class ProjectService:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate preliminary TEO report for %s: %s", project.code, exc)
             try:
-                excel_bytes = report_bundle.get("xlsx") if report_bundle else teo_report_service.build_cost_workbook(
-                    project, analysis
+                excel_bytes = (
+                    report_bundle.get("xlsx") if report_bundle else teo_report_service.build_cost_workbook(project, analysis)
                 )
                 if excel_bytes:
                     excel_object = f"{project.storage_path}/reports/preliminary_teo_{project.code}.xlsx"
@@ -128,6 +132,30 @@ class ProjectService:
                     }
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to generate preliminary TEO Excel for %s: %s", project.code, exc)
+
+            if docx_object:
+                approval_documents["docx"] = docx_object
+            if pdf_object:
+                approval_documents["pdf"] = pdf_object
+            if excel_object:
+                approval_documents["xlsx"] = excel_object
+
+            if approval_documents:
+                try:
+                    approval_service = TEOApprovalService(self.db)
+                    approval_service.start_approval(
+                        project,
+                        request=request,
+                        analysis=analysis,
+                        documents=approval_documents,
+                    )
+                    integration_updates["teo_approval"] = {
+                        "status": project.teo_approval_status,
+                        "route": project.teo_approval_route,
+                        "history": project.teo_approval_history,
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to initiate TEO approval for project %s: %s", project.code, exc)
 
         try:
             export_result = onec_export_service.export(project, metadata, analysis)

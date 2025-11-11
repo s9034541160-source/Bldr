@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 import requests
 
@@ -36,15 +36,7 @@ class ManagerNotificationService:
             f"Название: {project_name}\n"
             "Откройте карточку проекта для деталей."
         )
-        try:
-            response = requests.post(
-                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": message},
-                timeout=10,
-            )
-            response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to send Telegram notification to manager %s: %s", manager.id, exc)
+        self._send_message(chat_id=chat_id, text=message)
 
     def notify_procurement(self, *, materials: list[str], context: Optional[str] = None) -> None:
         if not self.bot_token:
@@ -61,15 +53,53 @@ class ManagerNotificationService:
         if context:
             body_lines.extend(["", context])
         message = "\n".join(body_lines)
+        self._send_message(chat_id=chat_id, text=message)
+
+    def notify_teo_approval(
+        self,
+        *,
+        chat_id: str,
+        project_code: str,
+        project_name: str,
+        role: str,
+        approver_name: Optional[str],
+        summary: str,
+        documents: Dict[str, str],
+    ) -> None:
+        """
+        Отправляет сообщение об этапах согласования ТЭО.
+        """
+        if not chat_id:
+            logger.debug("Approval chat id is not provided; skipping TEO approval notification.")
+            return
+        lines = [
+            "📑 Предварительное ТЭО — требуется согласование",
+            f"Проект {project_code} — {project_name}",
+            f"Ответственный этап: {role}{f' ({approver_name})' if approver_name else ''}",
+            "",
+            summary,
+        ]
+        if documents:
+            lines.append("")
+            lines.append("Файлы отчёта:")
+            for label, path in documents.items():
+                lines.append(f"• {label.upper()}: {path}")
+        message = "\n".join(lines)
+        self._send_message(chat_id=chat_id, text=message)
+
+    def _send_message(self, *, chat_id: str, text: str) -> None:
+        if not self.bot_token:
+            logger.debug("Telegram bot token not configured; skipping message send.")
+            return
         try:
             response = requests.post(
                 f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": message},
+                json={"chat_id": chat_id, "text": text},
                 timeout=10,
             )
             response.raise_for_status()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to send procurement Telegram notification: %s", exc)
+            logger.warning("Failed to send Telegram message to %s: %s", chat_id, exc)
 
 
 manager_notification_service = ManagerNotificationService()
