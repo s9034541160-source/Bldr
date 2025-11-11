@@ -63,7 +63,7 @@ class CPMBuilder:
         earliest_start, earliest_finish = self._forward_pass(graph, durations)
         latest_start, latest_finish, project_duration = self._backward_pass(graph, durations, earliest_finish)
         nodes: Dict[str, CPMNode] = {}
-        critical_path: List[str] = []
+        critical_path: List[str] = self._reconstruct_critical_path(graph, earliest_finish, project_duration)
 
         for node in graph.nodes:
             es = earliest_start[node]
@@ -83,8 +83,6 @@ class CPMBuilder:
                 critical=critical,
             )
             graph.nodes[node]["cpm"] = nodes[node]
-            if critical:
-                critical_path.append(node)
 
         return CPMResult(
             graph=graph,
@@ -128,6 +126,35 @@ class CPMBuilder:
             latest_finish[node] = finish
             latest_start[node] = finish - durations[node]
         return latest_start, latest_finish, project_duration
+
+    @staticmethod
+    def _reconstruct_critical_path(
+        graph: nx.DiGraph,
+        earliest_finish: Dict[str, float],
+        project_duration: float,
+    ) -> List[str]:
+        """
+        Получает критический путь, следуя по вершинам из стартовых к завершающим с нулевым запасом.
+        """
+        path: List[str] = []
+        start_nodes = [node for node in graph.nodes if graph.in_degree(node) == 0]
+        candidates = [node for node in start_nodes if abs(earliest_finish[node] - project_duration) >= 1e-6]
+        current_nodes = start_nodes if candidates else start_nodes
+
+        visited = set()
+        stack = list(current_nodes)
+        while stack:
+            node = stack.pop(0)
+            if node in visited:
+                continue
+            visited.add(node)
+            path.append(node)
+            successors = list(graph.successors(node))
+            critical_successors = [
+                succ for succ in successors if abs(earliest_finish[succ] - earliest_finish[node]) < 1e-6
+            ]
+            stack[:0] = critical_successors
+        return path
 
 
 __all__ = ["CPMBuilder", "CPMResult", "CPMNode"]
