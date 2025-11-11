@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import selectinload
@@ -21,6 +21,8 @@ from backend.services.gesn_retrieval import GESNRetrievalService, RetrievalCandi
 from backend.services.gesn_verification import GESNVerificationService, VerificationRequest, VerificationResult
 from backend.services.preliminary_cost_service import PreliminaryCostResult, PreliminaryCostService
 from backend.services.work_volume_extractor import WorkVolumeEntry, WorkVolumeResult, work_volume_extractor
+from backend.services.travel_cost_service import travel_cost_service
+from backend.services.financial_analysis_service import financial_analysis_service
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,8 @@ class PipelineResult:
     cost: PreliminaryCostResult
     extraction: WorkVolumeResult
     labor: Optional[LaborSummary]
+    travel: Optional[Dict[str, Any]] = None
+    financial: Optional[Dict[str, Any]] = None
     warnings: List[str] = field(default_factory=list)
 
 
@@ -82,12 +86,25 @@ class PreliminaryTEOPipeline:
             self._session = SessionLocal()
         return self._session
 
-    def process_file(self, file_path: str, *, top_k: int = 5) -> PipelineResult:
+    def process_file(
+        self,
+        file_path: str,
+        *,
+        top_k: int = 5,
+        metadata: Optional[Dict[str, Any]] = None,
+        timeline: Optional[Dict[str, Any]] = None,
+    ) -> PipelineResult:
         """
         Полный цикл обработки по файлу.
         """
         extraction = work_volume_extractor.extract_from_file(file_path)
-        return self.process_entries(extraction.entries, extraction=extraction, top_k=top_k)
+        return self.process_entries(
+            extraction.entries,
+            extraction=extraction,
+            top_k=top_k,
+            metadata=metadata,
+            timeline=timeline,
+        )
 
     def process_entries(
         self,
@@ -95,6 +112,8 @@ class PreliminaryTEOPipeline:
         *,
         extraction: Optional[WorkVolumeResult] = None,
         top_k: int = 5,
+        metadata: Optional[Dict[str, Any]] = None,
+        timeline: Optional[Dict[str, Any]] = None,
     ) -> PipelineResult:
         """
         Обработка заранее подготовленного списка объёмов.
@@ -136,12 +155,40 @@ class PreliminaryTEOPipeline:
         warnings.extend(cost_result.extraction.warnings)  # передаём предупреждения экстрактора
         labor_summary = self._calculate_labor(matches)
 
+        labor_payload: Optional[Dict[str, Any]] = None
+        if labor_summary:
+            labor_payload = self._serialize_labor_summary(labor_summary)
+
+        travel_payload: Optional[Dict[str, Any]] = None
+        effective_metadata = metadata or {}
+        if labor_payload:
+            try:
+                travel_result = travel_cost_service.estimate(labor_payload, effective_metadata)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Travel cost estimation failed: %s", exc)
+            else:
+                if travel_result:
+                    travel_payload = travel_result.to_dict()
+
+        financial_payload: Optional[Dict[str, Any]] = None
+        try:
+            financial_payload = financial_analysis_service.evaluate(
+                cost_summary=cost_result.summary,
+                timeline=timeline,
+                travel_summary=travel_payload,
+                metadata=effective_metadata,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Financial analysis pipeline fallback: %s", exc)
+
         return PipelineResult(
             volumes=entries,
             matches=matches,
             cost=cost_result,
             extraction=extraction or cost_result.extraction,
             labor=labor_summary,
+            travel=travel_payload,
+            financial=financial_payload,
             warnings=warnings,
         )
 
@@ -251,4 +298,22 @@ class PreliminaryTEOPipeline:
             worker_days=worker_days,
             schedules=schedules,
         )
+
+    def _serialize_labor_summary(self, summary: LaborSummary) -> Dict[str, Any]:
+        return {
+            "total_labor_hours": summary.total_labor_hours,
+            "total_worker_equivalent": summary.total_worker_equivalent,
+            "worker_days": summary.worker_days,
+            "schedules": summary.schedules,
+            "entries": [
+                {
+                    "volume_name": entry.volume_name,
+                    "norm_code": entry.norm_code,
+                    "labor_hours": entry.labor_hours,
+                    "worker_equivalent": entry.worker_equivalent,
+                    "resources": entry.resources,
+                }
+                for entry in summary.entries
+            ],
+        }
 

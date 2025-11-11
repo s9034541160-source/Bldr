@@ -5,7 +5,7 @@ Pydantic схемы для эндпоинтов предварительного
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,59 @@ class CostSummarySchema(BaseModel):
     missing_prices: List[str]
 
 
+class LaborEntrySchema(BaseModel):
+    """Позиция трудозатрат."""
+
+    volume_name: str
+    norm_code: str
+    labor_hours: float
+    worker_equivalent: float
+    resources: List[Dict[str, Any]] = []
+
+
+class LaborSummarySchema(BaseModel):
+    """Итог по трудозатратам."""
+
+    total_labor_hours: float
+    total_worker_equivalent: float
+    worker_days: float
+    schedules: Dict[str, Dict[str, float]]
+    entries: List[LaborEntrySchema]
+
+
+class TravelSummarySchema(BaseModel):
+    """Командировочные и СИЗ."""
+
+    total_travel: float
+    tickets: float
+    lodging: float
+    per_diem: float
+    ppe: float
+    total_before_coeff: float
+    total_with_coeff: float
+    coefficient: float
+    worker_count: int
+    worker_days: float
+
+
+class FinancialRiskSchema(BaseModel):
+    """Риск-профиль."""
+
+    score: float
+    level: str
+    factors: List[str]
+
+
+class FinancialSummarySchema(BaseModel):
+    """Финансовые метрики проекта."""
+
+    npv: float
+    irr_percent: Optional[float]
+    payback_months: Optional[int]
+    assumptions: Dict[str, float]
+    risk: FinancialRiskSchema
+
+
 class TEOResponseSchema(BaseModel):
     """Итоговый ответ конвейера предварительного ТЭО."""
 
@@ -67,5 +120,8 @@ class TEOResponseSchema(BaseModel):
     matches: List[MatchedNormSchema]
     cost_entries: List[CostEntrySchema]
     cost_summary: CostSummarySchema
+    labor_summary: Optional[LaborSummarySchema] = None
+    travel_summary: Optional[TravelSummarySchema] = None
+    financial_summary: Optional[FinancialSummarySchema] = None
 
 

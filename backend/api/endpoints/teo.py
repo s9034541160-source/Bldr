@@ -14,9 +14,14 @@ from backend.models import get_db
 from backend.schemas.teo import (
     CostEntrySchema,
     CostSummarySchema,
+    FinancialRiskSchema,
+    FinancialSummarySchema,
+    LaborEntrySchema,
+    LaborSummarySchema,
     MatchedNormSchema,
     TEORequestSchema,
     TEOResponseSchema,
+    TravelSummarySchema,
     WorkVolumeSchema,
 )
 from backend.services.teo_pipeline import MatchedNorm, PipelineResult, PreliminaryTEOPipeline
@@ -81,12 +86,56 @@ def _serialize_pipeline_result(result: PipelineResult) -> TEOResponseSchema:
         missing_prices=result.cost.summary.missing_prices,
     )
 
+    labor_summary = None
+    if result.labor:
+        labor_summary = LaborSummarySchema(
+            total_labor_hours=result.labor.total_labor_hours,
+            total_worker_equivalent=result.labor.total_worker_equivalent,
+            worker_days=result.labor.worker_days,
+            schedules=result.labor.schedules,
+            entries=[
+                LaborEntrySchema(
+                    volume_name=entry.volume_name,
+                    norm_code=entry.norm_code,
+                    labor_hours=entry.labor_hours,
+                    worker_equivalent=entry.worker_equivalent,
+                    resources=entry.resources,
+                )
+                for entry in result.labor.entries
+            ],
+        )
+
+    travel_summary = None
+    if result.travel:
+        travel_summary = TravelSummarySchema(**result.travel)
+
+    financial_summary = None
+    if result.financial:
+        risk = result.financial.get("risk") or {}
+        financial_summary = FinancialSummarySchema(
+            npv=result.financial.get("npv", 0.0),
+            irr_percent=result.financial.get("irr_percent"),
+            payback_months=result.financial.get("payback_months"),
+            assumptions={
+                key: float(value)
+                for key, value in (result.financial.get("assumptions") or {}).items()
+            },
+            risk=FinancialRiskSchema(
+                score=risk.get("score", 0.0),
+                level=risk.get("level", "n/a"),
+                factors=risk.get("factors", []),
+            ),
+        )
+
     return TEOResponseSchema(
         warnings=result.warnings,
         volumes=volumes,
         matches=matches,
         cost_entries=cost_entries,
         cost_summary=cost_summary,
+        labor_summary=labor_summary,
+        travel_summary=travel_summary,
+        financial_summary=financial_summary,
     )
 
 

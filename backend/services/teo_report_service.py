@@ -115,6 +115,23 @@ class TEOReportService:
                     f"(коэффициент {travel.get('coefficient', 1.0)})"
                 )
 
+            financial = analysis.get("financial")
+            if isinstance(financial, dict):
+                document.add_heading("Финансовые показатели", level=2)
+                document.add_paragraph(f"NPV: {financial.get('npv', 0):,.2f} руб.")
+                irr_value = financial.get("irr_percent")
+                if irr_value is not None:
+                    document.add_paragraph(f"IRR: {irr_value:.2f}%")
+                payback = financial.get("payback_months")
+                if payback is not None:
+                    document.add_paragraph(f"Срок окупаемости: {payback} мес.")
+                risk = financial.get("risk") or {}
+                document.add_paragraph(
+                    f"Уровень риска: {risk.get('level', 'n/a')} (score={risk.get('score', 0):.0f})"
+                )
+                for factor in risk.get("factors", []):
+                    document.add_paragraph(factor, style="List Bullet")
+
             timeline = analysis.get("timeline")
             if isinstance(timeline, dict):
                 document.add_heading("Сроки", level=2)
@@ -259,6 +276,34 @@ class TEOReportService:
             travel_ws.append(["Коэффициент", travel.get("coefficient", 1.0)])
             travel_ws.append(["Работники (чел.)", travel.get("worker_count", 0)])
             travel_ws.append(["Человеко-дни", travel.get("worker_days", 0)])
+
+        financial = analysis.get("financial")
+        if isinstance(financial, dict):
+            fin_ws = workbook.create_sheet(title="Financial")
+            fin_ws.append(["Показатель", "Значение"])
+            fin_ws["A1"].font = Font(bold=True)
+            fin_ws["B1"].font = Font(bold=True)
+            fin_ws.append(["NPV, руб.", financial.get("npv", 0)])
+            irr_value = financial.get("irr_percent")
+            fin_ws.append(["IRR, %", irr_value if irr_value is not None else "n/a"])
+            fin_ws.append(["Срок окупаемости, мес.", financial.get("payback_months", "n/a")])
+            assumptions = financial.get("assumptions") or {}
+            fin_ws.append([])
+            fin_ws.append(["Предположения"])
+            fin_ws["A5"].font = Font(bold=True)
+            for key, value in assumptions.items():
+                fin_ws.append([key, value])
+            risk = financial.get("risk") or {}
+            fin_ws.append([])
+            fin_ws.append(["Риск", "Значение"])
+            fin_ws["A" + str(fin_ws.max_row)].font = Font(bold=True)
+            fin_ws.append(["Уровень", risk.get("level", "n/a")])
+            fin_ws.append(["Score", risk.get("score", 0)])
+            fin_ws.append([])
+            fin_ws.append(["Факторы риска"])
+            fin_ws["A" + str(fin_ws.max_row)].font = Font(bold=True)
+            for factor in risk.get("factors", []):
+                fin_ws.append([factor])
 
         workbook.save(stream)
         stream.seek(0)

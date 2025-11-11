@@ -39,6 +39,7 @@ from backend.services.notifications.email_service import email_notification_serv
 from backend.services.market_price_service import market_price_service
 from backend.services.notifications.telegram import manager_notification_service
 from backend.services.travel_cost_service import travel_cost_service
+from backend.services.financial_analysis_service import financial_analysis_service
 from backend.models.auth import User
 from backend.services.project_manager_rotation import ProjectManagerRotation
 
@@ -78,15 +79,18 @@ class ProjectRequestService:
         analysis = metadata.setdefault("analysis", {})
         work_volume_data, volume_entries = self._extract_work_volumes(request, attachments)
         pending_manual_prices: List[str] = []
+        travel_payload: Optional[Dict[str, Any]] = None
+        timeline: Optional[Dict[str, Any]] = None
         if work_volume_data:
             analysis["work_volume"] = work_volume_data
             timeline = self._estimate_timeline(volume_entries, metadata)
             if timeline:
                 analysis["timeline"] = timeline
-            bundle = self._estimate_preliminary_cost(volume_entries, metadata)
+            bundle = self._estimate_preliminary_cost(volume_entries, metadata, timeline)
             if bundle:
                 cost_info = bundle.get("cost")
                 labor_info = bundle.get("labor")
+                travel_payload = bundle.get("travel")
                 if cost_info:
                     analysis["cost"] = cost_info
                     pending_manual_prices = self._prefetch_market_prices(cost_info)
@@ -95,9 +99,11 @@ class ProjectRequestService:
                 if labor_info:
                     analysis["labor"] = labor_info
                     # Вытягиваем связанные затраты на командировки и СИЗ, чтобы предоставить заказчику полный бюджет.
-                    travel_info = travel_cost_service.estimate(labor_info, metadata)
-                    if travel_info:
-                        travel_payload = travel_info.to_dict()
+                    if not travel_payload:
+                        travel_info = travel_cost_service.estimate(labor_info, metadata)
+                        if travel_info:
+                            travel_payload = travel_info.to_dict()
+                    if travel_payload:
                         analysis["travel"] = travel_payload
                         if cost_info:
                             base_total = cost_info.get("grand_total") or cost_info.get("total_cost") or 0.0
@@ -108,6 +114,11 @@ class ProjectRequestService:
                             cost_info["total_with_travel"] = base_value + float(
                                 travel_payload.get("total_with_coeff", 0.0)
                             )
+                financial_info = bundle.get("financial") or self._estimate_financials(
+                    cost_info, timeline, travel_payload, metadata
+                )
+                if financial_info:
+                    analysis["financial"] = financial_info
 
         entity = ProjectRequest(
             channel=request.channel.value,
@@ -472,12 +483,13 @@ class ProjectRequestService:
         self,
         entries: List[WorkVolumeEntry],
         metadata: Dict[str, Any],
+        timeline: Optional[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
         if not entries:
             return None
         pipeline = PreliminaryTEOPipeline(session=self.db)
         try:
-            result = pipeline.process_entries(entries, top_k=3)
+            result = pipeline.process_entries(entries, top_k=3, metadata=metadata, timeline=timeline)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Preliminary cost estimation failed: %s", exc)
             return None
@@ -536,7 +548,12 @@ class ProjectRequestService:
         ]
         cost_payload["entries"] = entries_payload
 
-        return {"cost": cost_payload, "labor": labor_payload}
+        return {
+            "cost": cost_payload,
+            "labor": labor_payload,
+            "travel": result.travel,
+            "financial": result.financial,
+        }
 
     def _prefetch_market_prices(self, cost_analysis: Dict[str, Any]) -> List[str]:
         missing = cost_analysis.get("missing_prices") or cost_analysis.get("cost", {}).get("missing_prices") or []
@@ -552,6 +569,26 @@ class ProjectRequestService:
                 logger.debug("Prefetch price failed for %s: %s", name, exc)
                 unresolved.append(name)
         return unresolved
+
+    def _estimate_financials(
+        self,
+        cost_info: Optional[Dict[str, Any]],
+        timeline: Optional[Dict[str, Any]],
+        travel_info: Optional[Dict[str, Any]],
+        metadata: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not cost_info:
+            return None
+        try:
+            return financial_analysis_service.evaluate(
+                cost_summary=cost_info,
+                timeline=timeline,
+                travel_summary=travel_info,
+                metadata=metadata,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Financial analysis failed: %s", exc)
+            return None
 
 
 __all__ = ["ProjectRequestService"]

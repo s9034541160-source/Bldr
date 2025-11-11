@@ -174,6 +174,12 @@ class Settings(BaseSettings):
         "UNSLOTH_DEFAULT_VALIDATION_PROMPTS",
         "Кратко опиши ключевые выводы по документации||Перечисли основные разделы строительного проекта",
     )
+
+    # Финансовые параметры по умолчанию
+    FINANCIAL_DISCOUNT_RATE: float = float(os.getenv("FINANCIAL_DISCOUNT_RATE", "0.12"))
+    FINANCIAL_OPERATION_PERIOD_MONTHS: int = int(os.getenv("FINANCIAL_OPERATION_PERIOD_MONTHS", "24"))
+    FINANCIAL_DEFAULT_MARGIN_RATE: float = float(os.getenv("FINANCIAL_DEFAULT_MARGIN_RATE", "0.25"))
+    FINANCIAL_DEFAULT_OPERATING_COST_RATE: float = float(os.getenv("FINANCIAL_DEFAULT_OPERATING_COST_RATE", "0.08"))
     
     class Config:
         env_file = ".env"
