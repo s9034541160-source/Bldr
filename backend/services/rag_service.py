@@ -5,6 +5,7 @@
 import json
 import logging
 import hashlib
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -18,8 +19,20 @@ except ImportError:  # huggingface_hub >=0.36 removed cached_download
     from huggingface_hub import hf_hub_download
     import huggingface_hub as _hf
 
-    def _hf_cached_download(*, url, library_name=None, library_version=None, user_agent=None, force_filename=None,
-                            cache_dir=None, legacy_cache_layout=False, proxies=None, etag_timeout=None, **kwargs):
+    def _hf_cached_download(
+        *,
+        url,
+        library_name=None,
+        library_version=None,
+        user_agent=None,
+        force_filename=None,
+        cache_dir=None,
+        legacy_cache_layout=False,
+        proxies=None,
+        etag_timeout=None,
+        use_auth_token=None,
+        **kwargs,
+    ):
         parsed = urlparse(url)
         if "huggingface.co" not in parsed.netloc:
             raise ValueError(f"Unsupported download url: {url}")
@@ -32,26 +45,43 @@ except ImportError:  # huggingface_hub >=0.36 removed cached_download
         revision = path_parts[3]
         filename = "/".join(path_parts[4:])
 
-        kwargs = {
+        download_kwargs = {
             "repo_id": repo_id,
             "filename": filename,
             "revision": revision,
             "cache_dir": cache_dir,
-            "force_filename": force_filename,
             "library_name": library_name,
             "library_version": library_version,
             "user_agent": user_agent,
+            "force_filename": force_filename,
+            "token": use_auth_token,
             "proxies": proxies,
+            "etag_timeout": etag_timeout,
         }
-        # drop None values and arguments unsupported by current hub version
-        cleaned_kwargs = {key: value for key, value in kwargs.items() if value is not None}
+
+        cleaned_kwargs = {key: value for key, value in download_kwargs.items() if value is not None}
 
         try:
-            return hf_hub_download(**cleaned_kwargs)
+            download_path = hf_hub_download(**cleaned_kwargs)
         except TypeError:
-            # remove proxies if unsupported
-            cleaned_kwargs.pop("proxies", None)
-            return hf_hub_download(**cleaned_kwargs)
+            # remove parameters unsupported by current hf_hub_download implementation
+            for optional_key in ("proxies", "etag_timeout", "force_filename"):
+                cleaned_kwargs.pop(optional_key, None)
+            download_path = hf_hub_download(**cleaned_kwargs)
+
+        if cache_dir and (force_filename or legacy_cache_layout):
+            target_name = force_filename or filename
+            target_path = Path(cache_dir) / target_name
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if not target_path.exists():
+                    shutil.copy2(download_path, target_path)
+            except Exception:
+                # best effort copy — leave fallback to original path
+                return str(Path(download_path))
+            return str(target_path)
+
+        return str(Path(download_path))
     cached_download = _hf_cached_download  # type: ignore[assignment]
     _hf.cached_download = cached_download  # type: ignore[attr-defined]
 
@@ -97,10 +127,17 @@ class RAGService:
             logger.info(f"Loading embedding model: {model_name}")
             self.embedding_model = SentenceTransformer(model_name)
             vector_size = self.embedding_model.get_sentence_embedding_dimension()
-            qdrant_service.init_collection(vector_size=vector_size)
-            logger.info("Embedding model loaded successfully")
+            logger.info(f"Embedding model loaded, vector size: {vector_size}")
+            
+            # Инициализация коллекции Qdrant (с обработкой ошибок)
+            try:
+                qdrant_service.init_collection(vector_size=vector_size)
+                logger.info("Qdrant collection initialized successfully")
+            except Exception as qdrant_error:
+                logger.warning(f"Failed to initialize Qdrant collection (will retry on first use): {qdrant_error}")
+                # Не прерываем загрузку - коллекция будет инициализирована при первом использовании
         except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
+            logger.error(f"Failed to load embedding model: {e}", exc_info=True)
             raise
     
     def create_embedding(self, text: str) -> List[float]:
@@ -110,6 +147,24 @@ class RAGService:
         
         embedding = self.embedding_model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
+    
+    def _ensure_collection_initialized(self):
+        """Убедиться, что коллекция Qdrant инициализирована"""
+        if not self.embedding_model:
+            raise RuntimeError("Embedding model not loaded")
+        
+        try:
+            # Проверяем, существует ли коллекция
+            collections = qdrant_service.client.get_collections()
+            collection_names = [col.name for col in collections.collections]
+            if qdrant_service.collection_name not in collection_names:
+                # Инициализируем коллекцию, если её нет
+                vector_size = self.embedding_model.get_sentence_embedding_dimension()
+                qdrant_service.init_collection(vector_size=vector_size)
+                logger.info("Qdrant collection initialized on first use")
+        except Exception as e:
+            logger.error(f"Failed to ensure Qdrant collection is initialized: {e}", exc_info=True)
+            raise
     
     def _build_point(
         self,
@@ -194,6 +249,9 @@ class RAGService:
             metadata: Метаданные документа
         """
         try:
+            # Убедиться, что коллекция инициализирована
+            self._ensure_collection_initialized()
+            
             # Создание эмбеддинга
             point = self._build_point(
                 document_id=document_id,
@@ -209,7 +267,7 @@ class RAGService:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to index document {document_id}: {e}")
+            logger.error(f"Failed to index document {document_id}: {e}", exc_info=True)
             self._metrics["last_error"] = str(e)
             return False
 

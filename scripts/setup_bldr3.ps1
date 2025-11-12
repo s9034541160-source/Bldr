@@ -4,7 +4,8 @@ param(
     [string]$HuggingFaceToken = $env:HF_TOKEN,
     [switch]$SkipModelDownload,
     [switch]$SkipDockerStartup,
-    [switch]$SkipFrontendInstall
+    [switch]$SkipFrontendInstall,
+    [switch]$ShowLogs
 )
 
 Set-StrictMode -Version Latest
@@ -175,20 +176,30 @@ function Start-DockerServices {
 }
 
 function Start-Backend {
-    param([string]$PythonExe, [string]$RepoRoot)
+    param([string]$PythonExe, [string]$RepoRoot, [bool]$ShowLogs = $false)
     Write-Step "Старт backend (uvicorn)"
-    Start-Process $PythonExe "-m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory $RepoRoot
+    if ($ShowLogs) {
+        Write-Host "Запуск backend в текущем окне (логи будут видны)..." -ForegroundColor Yellow
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$RepoRoot'; & '$PythonExe' -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory $RepoRoot
+    } else {
+        Start-Process $PythonExe "-m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory $RepoRoot
+    }
 }
 
 function Start-Celery {
-    param([string]$VenvPath, [string]$RepoRoot)
+    param([string]$VenvPath, [string]$RepoRoot, [bool]$ShowLogs = $false)
     Write-Step "Старт Celery воркера"
     $celery = Join-Path $VenvPath "Scripts\celery.exe"
-    Start-Process $celery "-A backend.tasks worker -l info -Q bldr_default,documents,processes,monitoring,models" -WorkingDirectory $RepoRoot
+    if ($ShowLogs) {
+        Write-Host "Запуск Celery в отдельном окне (логи будут видны)..." -ForegroundColor Yellow
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$RepoRoot'; & '$celery' -A backend.tasks worker -l info -Q bldr_default,documents,processes,monitoring,models" -WorkingDirectory $RepoRoot
+    } else {
+        Start-Process $celery "-A backend.tasks worker -l info -Q bldr_default,documents,processes,monitoring,models" -WorkingDirectory $RepoRoot
+    }
 }
 
 function Setup-Frontend {
-    param([string]$RepoRoot, [switch]$SkipInstall)
+    param([string]$RepoRoot, [switch]$SkipInstall, [bool]$ShowLogs = $false)
     $frontendDir = Join-Path $RepoRoot "frontend"
     Assert-Command -Command "npm" -InstallHint "Установите Node.js (https://nodejs.org/) и повторите."
 
@@ -201,7 +212,12 @@ function Setup-Frontend {
     }
 
     Write-Step "Старт npm run dev"
-    Start-Process $npmExecutable "run dev" -WorkingDirectory $frontendDir
+    if ($ShowLogs) {
+        Write-Host "Запуск frontend в отдельном окне (логи будут видны)..." -ForegroundColor Yellow
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; npm run dev" -WorkingDirectory $frontendDir
+    } else {
+        Start-Process $npmExecutable "run dev" -WorkingDirectory $frontendDir
+    }
 }
 
 function Summarize {
@@ -210,8 +226,13 @@ function Summarize {
     Write-Host "Backend: http://localhost:8000"
     Write-Host "Frontend: http://localhost:3000"
     Write-Host "Swagger: http://localhost:8000/api/docs"
-    Write-Host "Celery, backend и frontend запущены в отдельных окнах/процессах."
-    Write-Host "Для остановки: закройте соответствующие процессы (или выполните docker compose down)."
+    if ($ShowLogs) {
+        Write-Host "Celery, backend и frontend запущены в отдельных окнах PowerShell с видимыми логами."
+    } else {
+        Write-Host "Celery, backend и frontend запущены в отдельных окнах/процессах."
+    }
+    Write-Host "Для остановки: закройте соответствующие окна/процессы (или выполните docker compose down)."
+    Write-Host "`nДля запуска с видимыми логами используйте: .\scripts\setup_bldr3.ps1 -ShowLogs" -ForegroundColor Cyan
 }
 
 # --- основной сценарий ---
@@ -240,9 +261,9 @@ if (-not $SkipDockerStartup) {
     Write-Host "Пропускаю запуск docker compose."
 }
 
-Start-Backend -PythonExe $pythonExe -RepoRoot $repoRoot
-Start-Celery -VenvPath $venvPath -RepoRoot $repoRoot
+Start-Backend -PythonExe $pythonExe -RepoRoot $repoRoot -ShowLogs:$ShowLogs
+Start-Celery -VenvPath $venvPath -RepoRoot $repoRoot -ShowLogs:$ShowLogs
 
-Setup-Frontend -RepoRoot $repoRoot -SkipInstall:$SkipFrontendInstall
+Setup-Frontend -RepoRoot $repoRoot -SkipInstall:$SkipFrontendInstall -ShowLogs:$ShowLogs
 Summarize -RepoRoot $repoRoot
 
