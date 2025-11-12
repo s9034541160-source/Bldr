@@ -77,6 +77,7 @@ python-dotenv==1.0.0
 pytz==2025.2
 networkx==3.2.1
 matplotlib==3.9.2
+dicttoxml==1.7.16
 
 # Тестирование
 pytest==7.4.3

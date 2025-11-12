@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datasets import load_dataset
-from unsloth import FastLanguageModel
+from unsloth import FastLanguageModel, UnslothTrainingArguments
 from unsloth.trainer import SFTTrainer
-from unsloth.utils import UnslothTrainingArguments
 
 from backend.config.settings import settings
 
