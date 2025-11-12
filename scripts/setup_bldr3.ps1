@@ -214,9 +214,9 @@ function Setup-Frontend {
     Write-Step "Старт npm run dev"
     if ($ShowLogs) {
         Write-Host "Запуск frontend в отдельном окне (логи будут видны)..." -ForegroundColor Yellow
-        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; npm run dev" -WorkingDirectory $frontendDir
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; npx vite" -WorkingDirectory $frontendDir
     } else {
-        Start-Process $npmExecutable "run dev" -WorkingDirectory $frontendDir
+        Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$frontendDir'; npx vite" -WorkingDirectory $frontendDir
     }
 }
 

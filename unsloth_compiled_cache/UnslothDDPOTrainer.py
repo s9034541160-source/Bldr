@@ -294,7 +294,7 @@ class UnslothDDPOConfig(DDPOConfig):
     
     def __init__(
         self,
-        exp_name = '',
+        exp_name = '__main__',
         run_name = '',
         seed = 3407,
         log_with = None,
