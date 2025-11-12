@@ -1,9 +1,3 @@
-# ... existing imports ...
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-
-import ezdxf
-import fitz
-import ifcopenshell
 """
 Модуль загрузки ведомостей объёмов из табличных источников (CSV, XLS, XLSX).
 
@@ -14,12 +8,13 @@ from __future__ import annotations
 
 import csv
 import logging
-# ... existing code ...
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import ezdxf
 import fitz
+import ifcopenshell
 import xlrd
 from bs4 import BeautifulSoup
 from docx import Document
@@ -32,7 +27,7 @@ from backend.services.work_volume_extractor import (
     WorkVolumeResult,
     WorkVolumeSummary,
 )
-from backend.services.gesn_ingestion import GESNImportNorm, GESNCatalogLoader, GESNImportBundle, GESNImportSection
+from backend.services.gesn_ingestion import GESNCatalogLoader, GESNImportBundle
 
 logger = logging.getLogger(__name__)
 
