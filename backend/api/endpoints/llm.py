@@ -19,6 +19,8 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 
 class GenerateRequest(BaseModel):
     """Запрос на генерацию текста"""
+    model_config = {"protected_namespaces": ()}
+    
     prompt: str
     model_id: Optional[str] = None
     max_tokens: Optional[int] = None
@@ -31,12 +33,15 @@ class GenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     """Ответ с сгенерированным текстом"""
+    model_config = {"protected_namespaces": ()}
+    
     text: str
     model_id: str
 
 
 class LoadModelRequest(BaseModel):
     """Запрос на загрузку модели"""
+    model_config = {"protected_namespaces": ()}
 
     model_path: str
     ttl_seconds: Optional[int] = None
@@ -76,6 +81,7 @@ class UpdateGenerationParametersRequest(BaseModel):
 
 class RegisterModelRequest(BaseModel):
     """Регистрация специализированной модели"""
+    model_config = {"protected_namespaces": ()}
 
     model_id: str = Field(..., description="Уникальный идентификатор модели")
     model_path: str = Field(..., description="Путь к файлу модели")
@@ -89,6 +95,7 @@ class RegisterModelRequest(BaseModel):
 
 class ModelOperationResponse(BaseModel):
     """Ответ на операции с моделью"""
+    model_config = {"protected_namespaces": ()}
 
     status: str
     model_id: str

@@ -49,6 +49,8 @@ class DatasetResponse(BaseModel):
 
 
 class JobCreateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     dataset_id: int
     base_model_id: str
     model_id: Optional[str] = None
@@ -57,6 +59,8 @@ class JobCreateRequest(BaseModel):
 
 
 class JobResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     id: int
     dataset_id: int
     base_model_id: str
@@ -75,6 +79,8 @@ class JobResponse(BaseModel):
 
 
 class JobArtifactsResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     job_id: int
     model_id: Optional[str]
     adapter_url: Optional[str]

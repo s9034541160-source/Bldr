@@ -25,6 +25,8 @@ class ValidateRequest(BaseModel):
 
 class GenerateAndValidateRequest(BaseModel):
     """Запрос на генерацию и валидацию"""
+    model_config = {"protected_namespaces": ()}
+    
     query: str
     model_id: Optional[str] = None
     max_tokens: int = 512
