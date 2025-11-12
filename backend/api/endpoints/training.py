@@ -21,6 +21,8 @@ router = APIRouter(prefix="/training", tags=["training"])
 
 
 class DatasetCreateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     name: str = Field(..., max_length=255)
     description: Optional[str] = None
     document_ids: List[int]
